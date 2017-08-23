@@ -3,6 +3,9 @@ package com.example.muondetector;
 import android.content.Intent;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.view.Surface;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
 import android.widget.TextView;
 
 public class MainActivity extends AppCompatActivity {
@@ -21,8 +24,14 @@ public class MainActivity extends AppCompatActivity {
         TextView tv = (TextView) findViewById(R.id.sample_text);
         tv.setText(stringFromJNI());
 
+        // Create surface to preview the capture
+        SurfaceView preview = new SurfaceView(this);
+        SurfaceHolder previewHolder = preview.getHolder();
+        previewHolder.addCallback(DetectorService.surfaceHolderCallback);
+
         Intent detectorIntent = new Intent(MainActivity.this, DetectorService.class);
         this.startService(detectorIntent);
+
     }
 
     /**
