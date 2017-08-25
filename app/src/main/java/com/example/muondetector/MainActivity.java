@@ -1,11 +1,18 @@
 package com.example.muondetector;
 
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.support.v4.content.LocalBroadcastManager;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
+import android.view.View;
 import android.widget.TextView;
 
 public class MainActivity extends AppCompatActivity {
@@ -14,6 +21,16 @@ public class MainActivity extends AppCompatActivity {
     static {
         System.loadLibrary("native-lib");
     }
+
+    private BroadcastReceiver previewSurfaceReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            // Create surface to preview the capture
+            SurfaceView preview = (SurfaceView)findViewById(R.id.previewView);
+            SurfaceHolder previewHolder = preview.getHolder();
+            previewHolder.addCallback(DetectorService.surfaceHolderCallback);
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -24,13 +41,21 @@ public class MainActivity extends AppCompatActivity {
         TextView tv = (TextView) findViewById(R.id.sample_text);
         tv.setText(stringFromJNI());
 
-        // Create surface to preview the capture
-        SurfaceView preview = new SurfaceView(this);
-        SurfaceHolder previewHolder = preview.getHolder();
-        previewHolder.addCallback(DetectorService.surfaceHolderCallback);
+        // Register a local broadcast receiver to create the preview surface
+        LocalBroadcastManager.getInstance(this).registerReceiver(previewSurfaceReceiver,
+                new IntentFilter("CreatePreviewSurface"));
 
         Intent detectorIntent = new Intent(MainActivity.this, DetectorService.class);
         this.startService(detectorIntent);
+
+    }
+
+    @Override
+    protected void onDestroy () {
+        super.onDestroy();
+
+        // Unregister the local broadcast
+        LocalBroadcastManager.getInstance(this).unregisterReceiver(previewSurfaceReceiver);
 
     }
 

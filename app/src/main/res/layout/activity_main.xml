@@ -6,6 +6,11 @@
     android:layout_height="match_parent"
     tools:context="com.example.muondetector.MainActivity">
 
+    <SurfaceView
+        android:id="@+id/previewView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content" />
+
     <TextView
         android:id="@+id/sample_text"
         android:layout_width="wrap_content"
