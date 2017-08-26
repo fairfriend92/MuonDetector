@@ -2,6 +2,7 @@ package com.example.muondetector;
 
 import android.Manifest;
 import android.app.IntentService;
+import android.app.Service;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.ImageFormat;
@@ -14,6 +15,7 @@ import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.ImageReader;
+import android.os.IBinder;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v4.app.ActivityCompat;
@@ -25,21 +27,15 @@ import android.view.SurfaceHolder;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
 
 /**
  * Class which extends IntentService in order to run in the background. This is the main thread
  * where the detection of the muons takes place
  */
 
-public class DetectorService extends IntentService {
+public class DetectorService extends Service {
 
     private static boolean shutdown = false;
-
-    public DetectorService() {
-        super("DetectorService");
-    }
 
     public static void shutdownService() {
         shutdown = true;
@@ -47,6 +43,7 @@ public class DetectorService extends IntentService {
 
     private CameraDevice cameraDevice;
     private static StreamConfigurationMap streamConfigMap = null;
+    // TODO: use synchronized list
     private static List<Surface> outputsList = new ArrayList<>(3); // List of surfaces to draw the capture onto
 
     public static SurfaceHolder.Callback surfaceHolderCallback = new SurfaceHolder.Callback() {
@@ -55,6 +52,7 @@ public class DetectorService extends IntentService {
             Size previewSurfaceSize = streamConfigMap.getOutputSizes(SurfaceHolder.class)[0]; // Use the highest resolution for the preview surface
             holder.setFixedSize(previewSurfaceSize.getWidth(), previewSurfaceSize.getHeight());
             outputsList.add(holder.getSurface());
+            // TODO: save position of the surface just added
         }
 
         @Override
@@ -113,7 +111,7 @@ public class DetectorService extends IntentService {
         }
 
         @Override
-        public void onSurfacePrepared(@NonNull CameraCaptureSession session, Surface surface) {
+        public void onSurfacePrepared(@NonNull CameraCaptureSession session, @NonNull Surface surface) {
             Log.d("DetectorService", "test");
         }
     };
@@ -174,13 +172,18 @@ public class DetectorService extends IntentService {
     };
 
     @Override
-    protected void onHandleIntent(@Nullable Intent intent) {
+    public IBinder onBind (Intent intent) {
+        return null;
+    }
+
+    @Override
+    public int onStartCommand(@Nullable Intent intent, int flags, int startId) {
 
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) !=
                 PackageManager.PERMISSION_GRANTED) {
             // TODO: request permissions in app, send broadcast to MainActivity to do that (must target 25)
             Log.e("DetectorService", "Missing CAMERA permission");
-            return;
+            return START_STICKY;
         }
 
         CameraManager cameraManager = (CameraManager) this.getSystemService(CAMERA_SERVICE);
@@ -214,6 +217,7 @@ public class DetectorService extends IntentService {
             Log.e("DetectorService", stackTrace);
         }
 
+        return START_STICKY;
     }
 
 }
