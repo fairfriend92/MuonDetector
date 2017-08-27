@@ -1,7 +1,6 @@
 package com.example.muondetector;
 
 import android.Manifest;
-import android.app.IntentService;
 import android.app.Service;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -15,6 +14,7 @@ import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.ImageReader;
+import android.os.Binder;
 import android.os.IBinder;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
@@ -26,43 +26,38 @@ import android.view.Surface;
 import android.view.SurfaceHolder;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
- * Class which extends IntentService in order to run in the background. This is the main thread
- * where the detection of the muons takes place
+ * Class which extends Service in order to run in the background. Opens the camera and regularly
+ * takes pictures which are later processed by a separate thread in order to recognize eventual
+ * particle traces.
  */
 
 public class DetectorService extends Service {
 
-    private static boolean shutdown = false;
-
-    public static void shutdownService() {
-        shutdown = true;
-    }
-
     private CameraDevice cameraDevice;
     private static StreamConfigurationMap streamConfigMap = null;
-    // TODO: use synchronized list
-    private static List<Surface> outputsList = new ArrayList<>(3); // List of surfaces to draw the capture onto
+    private static List<Surface> outputsList = Collections.synchronizedList(new ArrayList<Surface>(3)); // List of surfaces to draw the capture onto
 
     public static SurfaceHolder.Callback surfaceHolderCallback = new SurfaceHolder.Callback() {
         @Override
         public void surfaceCreated(SurfaceHolder holder) {
+            Log.d("DetectorService", "surfaceHolderCallback surfaceCreated");
             Size previewSurfaceSize = streamConfigMap.getOutputSizes(SurfaceHolder.class)[0]; // Use the highest resolution for the preview surface
             holder.setFixedSize(previewSurfaceSize.getWidth(), previewSurfaceSize.getHeight());
             outputsList.add(holder.getSurface());
-            // TODO: save position of the surface just added
         }
 
         @Override
         public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
-
+            Log.d("DetectorService", "surfaceHolderCallback surfaceChanged");
         }
 
         @Override
         public void surfaceDestroyed(SurfaceHolder holder) {
-
+            Log.d("DetectorService", "surfaceHolderCallback surfaceDestroyed");
         }
     };
 
@@ -70,28 +65,40 @@ public class DetectorService extends Service {
         @Override
         public void onCaptureCompleted(@NonNull CameraCaptureSession session, @NonNull CaptureRequest request, @NonNull TotalCaptureResult result) {
             super.onCaptureCompleted(session, request, result);
-            Log.d("DetectorService", "test");
+            Log.d("DetectorService", "captureCallback onCaptureCompleted");
         }
     };
 
     CameraCaptureSession.StateCallback sessionStateCallback = new CameraCaptureSession.StateCallback() {
         @Override
         public void onActive(@NonNull CameraCaptureSession session) {
-            Log.d("DetectorService", "test");
+            Log.d("DetectorService", "sessionStateCallback onConfigured onActive");
         }
 
         @Override
         public void onClosed(@NonNull CameraCaptureSession session) {
-            Log.d("DetectorService", "test");
+            Log.d("DetectorService", "sessionStateCallback onConfigured onClosed");
         }
 
         @Override
         public void onConfigured(@NonNull CameraCaptureSession session) {
-            Log.d("DetectorService", "test1");
+            Log.d("DetectorService", "sessionStateCallback onConfigured");
             try {
                 CaptureRequest.Builder captReqBuilder =
                         cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
                 captReqBuilder.addTarget(outputsList.get(0)); // Add the preview surface as a target
+                captReqBuilder.set(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE, CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE_OFF);
+                captReqBuilder.set(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE, CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_OFF);
+                captReqBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF);
+                captReqBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AE_MODE_OFF);
+                captReqBuilder.set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_OFF);
+                captReqBuilder.set(CaptureRequest.CONTROL_EFFECT_MODE, CaptureRequest.CONTROL_EFFECT_MODE_OFF);
+                captReqBuilder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_OFF);
+                captReqBuilder.set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_OFF);
+                captReqBuilder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_OFF);
+                captReqBuilder.set(CaptureRequest.HOT_PIXEL_MODE, CaptureRequest.HOT_PIXEL_MODE_OFF);
+                captReqBuilder.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF);
+                captReqBuilder.set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_OFF);
                 CaptureRequest captureRequest = captReqBuilder.build();
                 session.capture(captureRequest, captureCallback, null);
             } catch (CameraAccessException e) {
@@ -102,17 +109,17 @@ public class DetectorService extends Service {
 
         @Override
         public void onConfigureFailed(@NonNull CameraCaptureSession session) {
-            Log.e("DetectorService", "CameraCaptureSession configuration failed");
+            Log.e("DetectorService", "sessionStateCallback configuration failed");
         }
 
         @Override
         public void onReady(@NonNull CameraCaptureSession session) {
-            Log.d("DetectorService", "test");
+            Log.d("DetectorService", "sessionStateCallback onReady");
         }
 
         @Override
         public void onSurfacePrepared(@NonNull CameraCaptureSession session, @NonNull Surface surface) {
-            Log.d("DetectorService", "test");
+            Log.d("DetectorService", "sessionStateCallback onSurfacePrepared");
         }
     };
 
@@ -125,9 +132,6 @@ public class DetectorService extends Service {
             int[] outputFormats = streamConfigMap.getOutputFormats();
             Size[] outputSize = null;
 
-            Intent previewSurfaceBroadcast = new Intent("CreatePreviewSurface");
-            LocalBroadcastManager.getInstance(DetectorService.this).sendBroadcast(previewSurfaceBroadcast);
-
             // Create surfaces for the postprocessing
             for (int outputFormat : outputFormats) {
                 if (outputFormat == ImageFormat.YUV_420_888) {
@@ -136,12 +140,12 @@ public class DetectorService extends Service {
                     // Create high resolution surface
                     ImageReader imageReader = ImageReader.newInstance(outputSize[0].getWidth(),
                             outputSize[0].getHeight(), ImageFormat.YUV_420_888, 1);
-                    outputsList.add(imageReader.getSurface());
+                    //outputsList.add(imageReader.getSurface());
 
                     // Create low resolution surface
                     imageReader = ImageReader.newInstance(outputSize[outputSize.length - 1].getWidth(),
                             outputSize[outputSize.length - 1].getHeight(), ImageFormat.YUV_420_888, 1);
-                    outputsList.add(imageReader.getSurface());
+                    //outputsList.add(imageReader.getSurface());
 
                     break;
                 }
@@ -155,7 +159,7 @@ public class DetectorService extends Service {
 
             try {
                 cameraDevice.createCaptureSession(outputsList, sessionStateCallback, null);
-                Log.d("DetectorService", "test opened");
+                Log.d("DetectorService", "createCaptureSession onOpened");
             } catch (CameraAccessException | IllegalArgumentException | IllegalStateException e) {
                 String stackTrace = Log.getStackTraceString(e);
                 Log.e("DetectorService", stackTrace);
@@ -183,7 +187,7 @@ public class DetectorService extends Service {
                 PackageManager.PERMISSION_GRANTED) {
             // TODO: request permissions in app, send broadcast to MainActivity to do that (must target 25)
             Log.e("DetectorService", "Missing CAMERA permission");
-            return START_STICKY;
+            return START_NOT_STICKY;
         }
 
         CameraManager cameraManager = (CameraManager) this.getSystemService(CAMERA_SERVICE);
@@ -217,7 +221,7 @@ public class DetectorService extends Service {
             Log.e("DetectorService", stackTrace);
         }
 
-        return START_STICKY;
+        return START_NOT_STICKY;
     }
 
 }

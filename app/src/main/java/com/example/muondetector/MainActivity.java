@@ -9,6 +9,7 @@ import android.graphics.Color;
 import android.support.v4.content.LocalBroadcastManager;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
@@ -22,16 +23,6 @@ public class MainActivity extends AppCompatActivity {
         System.loadLibrary("native-lib");
     }
 
-    private BroadcastReceiver previewSurfaceReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            // Create surface to preview the capture
-            SurfaceView preview = (SurfaceView)findViewById(R.id.previewView);
-            SurfaceHolder previewHolder = preview.getHolder();
-            previewHolder.addCallback(DetectorService.surfaceHolderCallback);
-        }
-    };
-
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -41,22 +32,18 @@ public class MainActivity extends AppCompatActivity {
         TextView tv = (TextView) findViewById(R.id.sample_text);
         tv.setText(stringFromJNI());
 
-        // Register a local broadcast receiver to create the preview surface
-        LocalBroadcastManager.getInstance(this).registerReceiver(previewSurfaceReceiver,
-                new IntentFilter("CreatePreviewSurface"));
-
         Intent detectorIntent = new Intent(MainActivity.this, DetectorService.class);
         this.startService(detectorIntent);
 
+        // Create surface to preview the capture
+        SurfaceView preview = (SurfaceView)findViewById(R.id.previewView);
+        SurfaceHolder previewHolder = preview.getHolder();
+        previewHolder.addCallback(DetectorService.surfaceHolderCallback);
     }
 
     @Override
     protected void onDestroy () {
         super.onDestroy();
-
-        // Unregister the local broadcast
-        LocalBroadcastManager.getInstance(this).unregisterReceiver(previewSurfaceReceiver);
-
     }
 
     /**
