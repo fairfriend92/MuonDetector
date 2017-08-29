@@ -17,15 +17,13 @@ import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.Image;
 import android.media.ImageReader;
-import android.net.Uri;
 import android.os.Environment;
 import android.os.IBinder;
-import android.provider.MediaStore;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v4.app.ActivityCompat;
-import android.support.v4.content.FileProvider;
 import android.util.Log;
+import android.util.Range;
 import android.util.Size;
 import android.view.Surface;
 import android.view.SurfaceHolder;
@@ -120,10 +118,20 @@ public class DetectorService extends Service {
         }
     };
 
+    Range<Long> exposureTimeRange;
+
     private CaptureRequest.Builder createCaptureRequestBuilder () throws CameraAccessException {
         CaptureRequest.Builder captReqBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
         captReqBuilder.addTarget(outputsList.get(0)); // Add the preview surface as a target
         captReqBuilder.addTarget(outputsList.get(1)); // Add JPEG surface
+        if (CaptureRequest.SENSOR_EXPOSURE_TIME != null) {
+            if (exposureTimeRange != null)
+                captReqBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, exposureTimeRange.getUpper());
+            else
+                captReqBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, (long) 100000000);
+        } else {
+            Log.i("DetectorService", "Sensor exposure time control not available!");
+        }
         captReqBuilder.set(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE, CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE_OFF);
         captReqBuilder.set(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE, CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_OFF);
         captReqBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF);
@@ -170,18 +178,18 @@ public class DetectorService extends Service {
 
             // Create surfaces for the postprocessing
             for (int outputFormat : outputFormats) {
-                if (outputFormat == ImageFormat.YUV_420_888) {
+                if (outputFormat == ImageFormat.FLEX_RGB_888) {
                     outputSize = streamConfigMap.getOutputSizes(outputFormat);
 
-                    // Create high resolution YUV surface
-                    ImageReader higResYUVImgReader = ImageReader.newInstance(outputSize[0].getWidth(),
-                            outputSize[0].getHeight(), ImageFormat.YUV_420_888, 1);
-                    //outputsList.add(higResYUVImgReader.getSurface());
+                    // Create high resolution RGB surface
+                    ImageReader higResRGBImgReader = ImageReader.newInstance(outputSize[0].getWidth(),
+                            outputSize[0].getHeight(), ImageFormat.FLEX_RGB_888, 1);
+                    //outputsList.add(higResRGBImgReader.getSurface());
 
-                    // Create low resolution YUV surface
-                    ImageReader lowResYUVImgReader = ImageReader.newInstance(outputSize[outputSize.length - 1].getWidth(),
-                            outputSize[outputSize.length - 1].getHeight(), ImageFormat.YUV_420_888, 1);
-                    //outputsList.add(lowResYUVImgReader.getSurface());
+                    // Create low resolution RGB surface
+                    ImageReader lowResRGBImgReader = ImageReader.newInstance(outputSize[outputSize.length - 1].getWidth(),
+                            outputSize[outputSize.length - 1].getHeight(), ImageFormat.FLEX_RGB_888, 1);
+                    //outputsList.add(lowResRGBImgReader.getSurface());
 
                     break;
                 } else if (outputFormat == ImageFormat.JPEG) {
@@ -203,6 +211,7 @@ public class DetectorService extends Service {
             jpegImageReader.setOnImageAvailableListener(new ImageReader.OnImageAvailableListener() {
                 @Override
                 public void onImageAvailable(ImageReader reader) {
+                    // Save JPEG picture in internal storage
                     Log.d("DetectorService", "JPEG image created");
                     Image latestImage = reader.acquireLatestImage();
                     ByteBuffer imageBuffer = latestImage.getPlanes()[0].getBuffer();
@@ -255,14 +264,35 @@ public class DetectorService extends Service {
             for (String cameraId : cameraIDs) {
                 CameraCharacteristics cameraCharact =
                         cameraManager.getCameraCharacteristics(cameraId);
+                Integer supportedHardwareLevel = cameraCharact.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL);
+                assert supportedHardwareLevel != null;
+                switch (supportedHardwareLevel) {
+                    case CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY:
+                        Log.i("DetectorService", "Legacy hardware");
+                        break;
+                    case CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED:
+                        Log.i("DetectorService", "Limited hardware");
+                        break;
+                    case CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_FULL:
+                        Log.i("DetectorService", "Full hardware");
+                        break;
+                    case CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_3:
+                        Log.i("DetectorService", "Level 3 hardware");
+                        break;
+                }
                 Integer lensFacingKey = cameraCharact.get(CameraCharacteristics.LENS_FACING);
                 assert lensFacingKey != null;
                 switch (lensFacingKey) {
                     case CameraCharacteristics.LENS_FACING_FRONT:
-                        Log.d("DetectorService", "Camera with id " + cameraId + " is front facing");
+                        Log.i("DetectorService", "Camera with id " + cameraId + " is front facing");
                         break;
                     case CameraCharacteristics.LENS_FACING_BACK:
-                        Log.d("DetectorService", "Camera with id " + cameraId + " is back facing");
+                        Log.i("DetectorService", "Camera with id " + cameraId + " is back facing");
+                        exposureTimeRange = cameraCharact.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE);
+                        if (exposureTimeRange != null)
+                            Log.i("DetectorService" , "Upper exposure time is " + exposureTimeRange.getUpper());
+                        else
+                            Log.i("DetectorService", "Could not get exposure time range");
                         streamConfigMap = cameraCharact.get(
                                 CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
                         cameraManager.openCamera(cameraId, cameraStateCallback, null);
