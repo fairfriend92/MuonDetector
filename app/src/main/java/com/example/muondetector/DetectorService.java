@@ -6,13 +6,18 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Color;
 import android.graphics.ImageFormat;
+import android.graphics.Rect;
+import android.graphics.YuvImage;
+import android.hardware.Camera;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureRequest;
+import android.hardware.camera2.CaptureResult;
 import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.Image;
@@ -28,6 +33,7 @@ import android.util.Size;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -38,6 +44,10 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Class which extends Service in order to run in the background. Opens the camera and regularly
@@ -45,29 +55,117 @@ import java.util.Locale;
  * particle traces.
  */
 
+@SuppressWarnings("deprecation")
 public class DetectorService extends Service {
+
+    // The following constants are used whenever the camera cannot provide the range of available values
+    private static final long MAX_EXPOSURE_TIME = 1000000000;
+    private static final float MAX_LENS_APERTURE = (float)1.4;
+    private static final int MAX_ISO = 1600;
 
     private CameraDevice cameraDevice;
     private static StreamConfigurationMap streamConfigMap = null;
     private static List<Surface> outputsList = Collections.synchronizedList(new ArrayList<Surface>(3)); // List of surfaces to draw the capture onto
+    private static Camera legacyCamera; // Use the old camera api in case the hardware does not support iso control using camera2
+    private static BlockingQueue<byte[]> captureDataQueue = new ArrayBlockingQueue<>(32);
+    private static final Object captureThreadLock = new Object();
+    private List<CaptureResult.Key<?>> captureResultKeys;
+    private List<CaptureRequest.Key<?>> captureRequestKeys;
+    private Range<Long> exposureTimeRange;
+    private float[] apertureSizeRange;
+    private Range<Integer> ISORange;
+
+    private Camera.PreviewCallback previewCallback = new Camera.PreviewCallback() {
+        @Override
+        public void onPreviewFrame(byte[] data, Camera camera) {
+            long time = System.nanoTime();
+
+            // Convert the YUV preview frame to jpeg
+            Camera.Size previewSize = camera.getParameters().getPreviewSize();
+            YuvImage yuvImage = new YuvImage(data, ImageFormat.NV21, previewSize.width, previewSize.height, null);
+            ByteArrayOutputStream byteArrayOS = new ByteArrayOutputStream();
+            yuvImage.compressToJpeg(new Rect(0, 0, previewSize.width, previewSize.height), 100, byteArrayOS);
+            byte[] jdata = byteArrayOS.toByteArray();
+
+            // Crate low res bitmap from jpeg data
+            Bitmap lowResBitmap;
+            BitmapFactory.Options lowResOptions = new BitmapFactory.Options();
+            lowResOptions.inSampleSize = 16;
+            lowResBitmap = BitmapFactory.decodeByteArray(jdata, 0, jdata.length, lowResOptions);
+
+            // Compute the highest sum of the RGB components for each pixel
+            int[] pixels = new int[lowResBitmap.getHeight() * lowResBitmap.getWidth()];
+            lowResBitmap.getPixels(pixels, 0, lowResBitmap.getWidth(), 0, 0, lowResBitmap.getWidth(), lowResBitmap.getHeight());
+            int maxValue = 0;
+            for (int pixel : pixels) {
+                int sum = Color.red(pixel) + Color.green(pixel) + Color.blue(pixel);
+                maxValue = sum >= maxValue ? sum : maxValue;
+            }
+
+            // Save bitmap if first level trigger has detected a candidate
+            if (maxValue > 50) {
+                try {
+                    File imageFile = createImageFile();
+                    FileOutputStream fileOutputStream = new FileOutputStream(imageFile);
+                    lowResBitmap.compress(Bitmap.CompressFormat.JPEG, 100, fileOutputStream);
+                    fileOutputStream.close();
+                } catch (IOException e) {
+                    String stackTrace = Log.getStackTraceString(e);
+                    Log.e("DetectorService", stackTrace);
+                }
+            }
+            Log.d("DetectorService", " " + (System.nanoTime() - time) / 1000000 + " ms maxValue " + maxValue);
+        }
+    };
+
+    ExecutorService captureThreadExecutor = Executors.newSingleThreadExecutor();
+    private class CaptureThread implements Runnable {
+
+        @Override
+        public void run () {
+            synchronized (captureThreadLock) {
+                try {
+                    captureThreadLock.wait();
+                } catch (InterruptedException e) {
+                    String stackTrace = Log.getStackTraceString(e);
+                    Log.e("DetectorService", stackTrace);
+                }
+            }
+
+            legacyCamera.setPreviewCallback(previewCallback);
+            legacyCamera.startPreview();
+        }
+    }
 
     static SurfaceHolder.Callback surfaceHolderCallback = new SurfaceHolder.Callback() {
         @Override
         public void surfaceCreated(SurfaceHolder holder) {
-            Log.d("DetectorService", "surfaceHolderCallback surfaceCreated");
-            Size previewSurfaceSize = streamConfigMap.getOutputSizes(SurfaceHolder.class)[0]; // Use the highest resolution for the preview surface
-            holder.setFixedSize(previewSurfaceSize.getWidth(), previewSurfaceSize.getHeight());
-            outputsList.add(holder.getSurface());
+            //Log.d("DetectorService", "surfaceHolderCallback surfaceCreated");
+            if (streamConfigMap != null) { // Code executes only if camera2 is being used
+                Size previewSurfaceSize = streamConfigMap.getOutputSizes(SurfaceHolder.class)[0]; // Use the highest resolution for the preview surface
+                holder.setFixedSize(previewSurfaceSize.getWidth(), previewSurfaceSize.getHeight());
+                outputsList.add(holder.getSurface());
+            } else {
+                try {
+                    legacyCamera.setPreviewDisplay(holder);
+                    synchronized (captureThreadLock) {
+                        captureThreadLock.notify();
+                    }
+                } catch (IOException e) {
+                    String stackTrace = Log.getStackTraceString(e);
+                    Log.e("DetectorService", stackTrace);
+                }
+            }
         }
 
         @Override
         public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
-            Log.d("DetectorService", "surfaceHolderCallback surfaceChanged");
+            //Log.d("DetectorService", "surfaceHolderCallback surfaceChanged");
         }
 
         @Override
         public void surfaceDestroyed(SurfaceHolder holder) {
-            Log.d("DetectorService", "surfaceHolderCallback surfaceDestroyed");
+            //Log.d("DetectorService", "surfaceHolderCallback surfaceDestroyed");
         }
     };
 
@@ -75,24 +173,26 @@ public class DetectorService extends Service {
         @Override
         public void onCaptureCompleted(@NonNull CameraCaptureSession session, @NonNull CaptureRequest request, @NonNull TotalCaptureResult result) {
             super.onCaptureCompleted(session, request, result);
-            Log.d("DetectorService", "captureCallback onCaptureCompleted");
+            if (captureResultKeys.contains(CaptureResult.LENS_APERTURE))
+                Log.i("DetectorService", "Lens aperture is " + result.get(CaptureResult.LENS_APERTURE));
+            //Log.d("DetectorService", "captureCallback onCaptureCompleted");
         }
     };
 
     private CameraCaptureSession.StateCallback sessionStateCallback = new CameraCaptureSession.StateCallback() {
         @Override
         public void onActive(@NonNull CameraCaptureSession session) {
-            Log.d("DetectorService", "sessionStateCallback onConfigured onActive");
+            //Log.d("DetectorService", "sessionStateCallback onConfigured onActive");
         }
 
         @Override
         public void onClosed(@NonNull CameraCaptureSession session) {
-            Log.d("DetectorService", "sessionStateCallback onConfigured onClosed");
+            //Log.d("DetectorService", "sessionStateCallback onConfigured onClosed");
         }
 
         @Override
         public void onConfigured(@NonNull CameraCaptureSession session) {
-            Log.d("DetectorService", "sessionStateCallback onConfigured");
+            //Log.d("DetectorService", "sessionStateCallback onConfigured");
             try {
                 CaptureRequest captureRequest = createCaptureRequestBuilder().build();
                 session.capture(captureRequest, captureCallback, null);
@@ -104,34 +204,26 @@ public class DetectorService extends Service {
 
         @Override
         public void onConfigureFailed(@NonNull CameraCaptureSession session) {
-            Log.e("DetectorService", "sessionStateCallback configuration failed");
+            //Log.e("DetectorService", "sessionStateCallback configuration failed");
         }
 
         @Override
         public void onReady(@NonNull CameraCaptureSession session) {
-            Log.d("DetectorService", "sessionStateCallback onReady");
+            //Log.d("DetectorService", "sessionStateCallback onReady");
         }
 
         @Override
         public void onSurfacePrepared(@NonNull CameraCaptureSession session, @NonNull Surface surface) {
-            Log.d("DetectorService", "sessionStateCallback onSurfacePrepared");
+            //Log.d("DetectorService", "sessionStateCallback onSurfacePrepared");
         }
     };
 
-    Range<Long> exposureTimeRange;
-
     private CaptureRequest.Builder createCaptureRequestBuilder () throws CameraAccessException {
-        CaptureRequest.Builder captReqBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+        CaptureRequest.Builder captReqBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
         captReqBuilder.addTarget(outputsList.get(0)); // Add the preview surface as a target
         captReqBuilder.addTarget(outputsList.get(1)); // Add JPEG surface
-        if (CaptureRequest.SENSOR_EXPOSURE_TIME != null) {
-            if (exposureTimeRange != null)
-                captReqBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, exposureTimeRange.getUpper());
-            else
-                captReqBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, (long) 100000000);
-        } else {
-            Log.i("DetectorService", "Sensor exposure time control not available!");
-        }
+
+        // Manual settings
         captReqBuilder.set(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE, CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE_OFF);
         captReqBuilder.set(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE, CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_OFF);
         captReqBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF);
@@ -144,6 +236,28 @@ public class DetectorService extends Service {
         captReqBuilder.set(CaptureRequest.HOT_PIXEL_MODE, CaptureRequest.HOT_PIXEL_MODE_OFF);
         captReqBuilder.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF);
         captReqBuilder.set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_OFF);
+        if (exposureTimeRange != null) {
+            Log.i("DetectorService", "Upper exposure time is " + exposureTimeRange.getUpper());
+            captReqBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, exposureTimeRange.getUpper());
+        }
+        else {
+            Log.i("DetectorService", "Exposure time range is not available");
+            captReqBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, MAX_EXPOSURE_TIME);
+        }
+        if (apertureSizeRange != null) {
+            Log.i("DetectorService", "Maximum lens aperture is " + apertureSizeRange[apertureSizeRange.length - 1]);
+            captReqBuilder.set(CaptureRequest.LENS_APERTURE, apertureSizeRange[apertureSizeRange.length - 1]);
+        } else {
+            Log.i("DetectorService", "List of lens apertures is not available");
+            captReqBuilder.set(CaptureRequest.LENS_APERTURE, MAX_LENS_APERTURE);
+        }
+        if (ISORange != null) {
+            Log.i("DetectorService", "Maximum ISO is " + ISORange.getUpper());
+            captReqBuilder.set(CaptureRequest.SENSOR_SENSITIVITY, ISORange.getUpper());
+        } else {
+            Log.i("DetectorService", "ISO range is not available");
+            captReqBuilder.set(CaptureRequest.SENSOR_SENSITIVITY, MAX_ISO);
+        }
         return captReqBuilder;
     }
 
@@ -201,8 +315,8 @@ public class DetectorService extends Service {
             }
 
             try {
+                //Log.d("DetectorService", "createCaptureSession onOpened");
                 cameraDevice.createCaptureSession(outputsList, sessionStateCallback, null);
-                Log.d("DetectorService", "createCaptureSession onOpened");
             } catch (CameraAccessException | IllegalArgumentException | IllegalStateException e) {
                 String stackTrace = Log.getStackTraceString(e);
                 Log.e("DetectorService", stackTrace);
@@ -211,8 +325,9 @@ public class DetectorService extends Service {
             jpegImageReader.setOnImageAvailableListener(new ImageReader.OnImageAvailableListener() {
                 @Override
                 public void onImageAvailable(ImageReader reader) {
+                    //Log.d("DetectorService", "JPEG image created");
+
                     // Save JPEG picture in internal storage
-                    Log.d("DetectorService", "JPEG image created");
                     Image latestImage = reader.acquireLatestImage();
                     ByteBuffer imageBuffer = latestImage.getPlanes()[0].getBuffer();
                     byte[] imageBytes = new byte[imageBuffer.capacity()];
@@ -248,6 +363,9 @@ public class DetectorService extends Service {
     @Override
     public int onStartCommand(@Nullable Intent intent, int flags, int startId) {
 
+
+        captureThreadExecutor.submit(new CaptureThread());
+
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) !=
                 PackageManager.PERMISSION_GRANTED) {
             // TODO: request permissions in app, send broadcast to MainActivity to do that (must target 25)
@@ -257,6 +375,8 @@ public class DetectorService extends Service {
 
         CameraManager cameraManager = (CameraManager) this.getSystemService(CAMERA_SERVICE);
 
+        boolean manualControlAvailable = false;
+
         try {
             String[] cameraIDs = cameraManager.getCameraIdList();
 
@@ -264,22 +384,6 @@ public class DetectorService extends Service {
             for (String cameraId : cameraIDs) {
                 CameraCharacteristics cameraCharact =
                         cameraManager.getCameraCharacteristics(cameraId);
-                Integer supportedHardwareLevel = cameraCharact.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL);
-                assert supportedHardwareLevel != null;
-                switch (supportedHardwareLevel) {
-                    case CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY:
-                        Log.i("DetectorService", "Legacy hardware");
-                        break;
-                    case CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED:
-                        Log.i("DetectorService", "Limited hardware");
-                        break;
-                    case CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_FULL:
-                        Log.i("DetectorService", "Full hardware");
-                        break;
-                    case CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_3:
-                        Log.i("DetectorService", "Level 3 hardware");
-                        break;
-                }
                 Integer lensFacingKey = cameraCharact.get(CameraCharacteristics.LENS_FACING);
                 assert lensFacingKey != null;
                 switch (lensFacingKey) {
@@ -288,14 +392,52 @@ public class DetectorService extends Service {
                         break;
                     case CameraCharacteristics.LENS_FACING_BACK:
                         Log.i("DetectorService", "Camera with id " + cameraId + " is back facing");
-                        exposureTimeRange = cameraCharact.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE);
-                        if (exposureTimeRange != null)
-                            Log.i("DetectorService" , "Upper exposure time is " + exposureTimeRange.getUpper());
-                        else
-                            Log.i("DetectorService", "Could not get exposure time range");
-                        streamConfigMap = cameraCharact.get(
-                                CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-                        cameraManager.openCamera(cameraId, cameraStateCallback, null);
+
+                        // Get the overall hardware level
+                        Integer supportedHardwareLevel = cameraCharact.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL);
+                        assert supportedHardwareLevel != null;
+                        switch (supportedHardwareLevel) {
+                            case CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY:
+                                Log.i("DetectorService", "Legacy hardware");
+                                break;
+                            case CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED:
+                                Log.i("DetectorService", "Limited hardware");
+                                break;
+                            case CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_FULL:
+                                Log.i("DetectorService", "Full hardware");
+                                break;
+                            case CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_3:
+                                Log.i("DetectorService", "Level 3 hardware");
+                                break;
+                        }
+
+                        // Get the available settings for the capture result and the capture request
+                        captureResultKeys = cameraCharact.getAvailableCaptureResultKeys();
+                        /*
+                        for (CaptureResult.Key key : captureResultKeys) {
+                            Log.i("DetectorService", "Capture result suppoerted key: " + key.getName());
+                        }
+                        */
+                        captureRequestKeys = cameraCharact.getAvailableCaptureRequestKeys();
+                        /*
+                        for (CaptureRequest.Key key : captureRequestKeys) {
+                            Log.i("DetectorService", "Capture request suppoerted key: " + key.getName());
+                        }
+                        */
+
+                        manualControlAvailable = captureRequestKeys.contains(CaptureRequest.SENSOR_EXPOSURE_TIME) &&
+                                captureRequestKeys.contains(CaptureRequest.SENSOR_SENSITIVITY);
+
+                        // Use the new camera2 api only if the vendor has implemented basic manual control
+                        if (manualControlAvailable) {
+                            exposureTimeRange = cameraCharact.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE);
+                            apertureSizeRange = cameraCharact.get(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES);
+                            ISORange = cameraCharact.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE);
+
+                            streamConfigMap = cameraCharact.get(
+                                    CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+                            cameraManager.openCamera(cameraId, cameraStateCallback, null);
+                        }
                         break;
                     default:
                         break;
@@ -305,6 +447,32 @@ public class DetectorService extends Service {
         } catch (CameraAccessException e) {
             String stackTrace = Log.getStackTraceString(e);
             Log.e("DetectorService", stackTrace);
+        }
+
+        // Use the old camera api if the vendor has NOT implemented basic manual control through camera2
+        if (!manualControlAvailable) {
+            try {
+                legacyCamera = Camera.open();
+                Camera.Parameters parameters = legacyCamera.getParameters();
+                String parametersString = parameters.flatten();
+                if (parametersString.contains("iso-speed")) {
+                    parameters.set("iso-speed", 1600);
+                }
+                parameters.set("saturation", "high");
+                parameters.setAntibanding(Camera.Parameters.ANTIBANDING_OFF);
+                parameters.setColorEffect(Camera.Parameters.EFFECT_NONE);
+                parameters.setExposureCompensation(parameters.getMaxExposureCompensation());
+                parameters.setFlashMode(Camera.Parameters.FLASH_MODE_OFF);
+                parameters.setWhiteBalance(Camera.Parameters.WHITE_BALANCE_SHADE);
+                parameters.setJpegQuality(100);
+                parameters.setAutoExposureLock(true);
+                parameters.setAutoWhiteBalanceLock(true);
+                legacyCamera.setParameters(parameters);
+                legacyCamera.setDisplayOrientation(90);
+            } catch (Exception e) {
+                String stackTrace = Log.getStackTraceString(e);
+                Log.e("DetectorService", stackTrace);
+            }
         }
 
         return START_NOT_STICKY;
