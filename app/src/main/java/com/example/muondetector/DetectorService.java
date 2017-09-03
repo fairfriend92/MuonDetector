@@ -64,9 +64,10 @@ public class DetectorService extends Service {
     private static final int MAX_ISO = 1600;
 
     private CameraDevice cameraDevice;
+    private static boolean shutdown = false;
     private static StreamConfigurationMap streamConfigMap = null;
     private static List<Surface> outputsList = Collections.synchronizedList(new ArrayList<Surface>(3)); // List of surfaces to draw the capture onto
-    private static Camera legacyCamera; // Use the old camera api in case the hardware does not support iso control using camera2
+    static Camera legacyCamera; // Use the old camera api in case the hardware does not support iso control using camera2
     private static BlockingQueue<byte[]> captureDataQueue = new ArrayBlockingQueue<>(32);
     private static final Object captureThreadLock = new Object();
     private List<CaptureResult.Key<?>> captureResultKeys;
@@ -76,6 +77,9 @@ public class DetectorService extends Service {
     private Range<Integer> ISORange;
 
     private Camera.PreviewCallback previewCallback = new Camera.PreviewCallback() {
+
+        int maxValue = 0;
+
         @Override
         public void onPreviewFrame(byte[] data, Camera camera) {
             long time = System.nanoTime();
@@ -88,26 +92,32 @@ public class DetectorService extends Service {
             byte[] jdata = byteArrayOS.toByteArray();
 
             // Crate low res bitmap from jpeg data
-            Bitmap lowResBitmap;
             BitmapFactory.Options lowResOptions = new BitmapFactory.Options();
-            lowResOptions.inSampleSize = 16;
-            lowResBitmap = BitmapFactory.decodeByteArray(jdata, 0, jdata.length, lowResOptions);
+            lowResOptions.inSampleSize = 8;
+            Bitmap lowResBitmap = BitmapFactory.decodeByteArray(jdata, 0, jdata.length, lowResOptions);
 
             // Compute the highest sum of the RGB components for each pixel
             int[] pixels = new int[lowResBitmap.getHeight() * lowResBitmap.getWidth()];
             lowResBitmap.getPixels(pixels, 0, lowResBitmap.getWidth(), 0, 0, lowResBitmap.getWidth(), lowResBitmap.getHeight());
-            int maxValue = 0;
+            int previewMaxValue = 0;
+            boolean triggerActivated = false;
             for (int pixel : pixels) {
                 int sum = Color.red(pixel) + Color.green(pixel) + Color.blue(pixel);
-                maxValue = sum >= maxValue ? sum : maxValue;
+                if (maxValue == 0) {
+                    previewMaxValue = previewMaxValue > sum ? previewMaxValue : sum;
+                } else
+                    triggerActivated = sum > maxValue * 1.05;
             }
+            maxValue = maxValue == 0 ? previewMaxValue : maxValue;
 
             // Save bitmap if first level trigger has detected a candidate
-            if (maxValue > 50) {
+            if (triggerActivated) {
                 try {
                     File imageFile = createImageFile();
                     FileOutputStream fileOutputStream = new FileOutputStream(imageFile);
-                    lowResBitmap.compress(Bitmap.CompressFormat.JPEG, 100, fileOutputStream);
+                    BitmapFactory.Options highResOptions = new BitmapFactory.Options();
+                    Bitmap highResBitmap = BitmapFactory.decodeByteArray(jdata, 0, jdata.length, highResOptions);
+                    highResBitmap.compress(Bitmap.CompressFormat.JPEG, 100, fileOutputStream);
                     fileOutputStream.close();
                 } catch (IOException e) {
                     String stackTrace = Log.getStackTraceString(e);
@@ -123,17 +133,19 @@ public class DetectorService extends Service {
 
         @Override
         public void run () {
-            synchronized (captureThreadLock) {
-                try {
-                    captureThreadLock.wait();
-                } catch (InterruptedException e) {
-                    String stackTrace = Log.getStackTraceString(e);
-                    Log.e("DetectorService", stackTrace);
+            while (!shutdown) {
+                synchronized (captureThreadLock) {
+                    try {
+                        captureThreadLock.wait();
+                    } catch (InterruptedException e) {
+                        String stackTrace = Log.getStackTraceString(e);
+                        Log.e("DetectorService", stackTrace);
+                    }
                 }
-            }
 
-            legacyCamera.setPreviewCallback(previewCallback);
-            legacyCamera.startPreview();
+                legacyCamera.setPreviewCallback(previewCallback);
+                legacyCamera.startPreview();
+            }
         }
     }
 
@@ -145,22 +157,29 @@ public class DetectorService extends Service {
                 Size previewSurfaceSize = streamConfigMap.getOutputSizes(SurfaceHolder.class)[0]; // Use the highest resolution for the preview surface
                 holder.setFixedSize(previewSurfaceSize.getWidth(), previewSurfaceSize.getHeight());
                 outputsList.add(holder.getSurface());
-            } else {
-                try {
-                    legacyCamera.setPreviewDisplay(holder);
-                    synchronized (captureThreadLock) {
-                        captureThreadLock.notify();
-                    }
-                } catch (IOException e) {
-                    String stackTrace = Log.getStackTraceString(e);
-                    Log.e("DetectorService", stackTrace);
-                }
             }
         }
 
         @Override
         public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
             //Log.d("DetectorService", "surfaceHolderCallback surfaceChanged");
+            assert holder.getSurface() != null;
+            try {
+                legacyCamera.stopPreview();
+            } catch (Exception e) {
+                String stackTrace = Log.getStackTraceString(e);
+                Log.e("DetectorService", stackTrace);
+            }
+
+            try {
+                legacyCamera.setPreviewDisplay(holder);
+                synchronized (captureThreadLock) {
+                    captureThreadLock.notify();
+                }
+            } catch (Exception e){
+                String stackTrace = Log.getStackTraceString(e);
+                Log.e("DetectorService", stackTrace);
+            }
         }
 
         @Override
@@ -363,14 +382,13 @@ public class DetectorService extends Service {
     @Override
     public int onStartCommand(@Nullable Intent intent, int flags, int startId) {
 
-
         captureThreadExecutor.submit(new CaptureThread());
 
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) !=
                 PackageManager.PERMISSION_GRANTED) {
             // TODO: request permissions in app, send broadcast to MainActivity to do that (must target 25)
             Log.e("DetectorService", "Missing CAMERA permission");
-            return START_NOT_STICKY;
+            return START_STICKY;
         }
 
         CameraManager cameraManager = (CameraManager) this.getSystemService(CAMERA_SERVICE);
@@ -455,10 +473,12 @@ public class DetectorService extends Service {
                 legacyCamera = Camera.open();
                 Camera.Parameters parameters = legacyCamera.getParameters();
                 String parametersString = parameters.flatten();
+                Log.d("ParametersString", parametersString);
                 if (parametersString.contains("iso-speed")) {
                     parameters.set("iso-speed", 1600);
                 }
                 parameters.set("saturation", "high");
+                parameters.set("brightness", "high");
                 parameters.setAntibanding(Camera.Parameters.ANTIBANDING_OFF);
                 parameters.setColorEffect(Camera.Parameters.EFFECT_NONE);
                 parameters.setExposureCompensation(parameters.getMaxExposureCompensation());
@@ -467,6 +487,7 @@ public class DetectorService extends Service {
                 parameters.setJpegQuality(100);
                 parameters.setAutoExposureLock(true);
                 parameters.setAutoWhiteBalanceLock(true);
+                parameters.setPreviewFrameRate(60);
                 legacyCamera.setParameters(parameters);
                 legacyCamera.setDisplayOrientation(90);
             } catch (Exception e) {
@@ -475,7 +496,7 @@ public class DetectorService extends Service {
             }
         }
 
-        return START_NOT_STICKY;
+        return START_STICKY;
     }
 
 }
