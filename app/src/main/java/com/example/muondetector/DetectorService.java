@@ -1,6 +1,7 @@
 package com.example.muondetector;
 
 import android.Manifest;
+import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -24,9 +25,11 @@ import android.media.Image;
 import android.media.ImageReader;
 import android.os.Environment;
 import android.os.IBinder;
+import android.os.Process;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v4.app.ActivityCompat;
+import android.support.v4.app.NotificationCompat;
 import android.util.Log;
 import android.util.Range;
 import android.util.Size;
@@ -49,6 +52,8 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+import static java.lang.Math.abs;
+
 /**
  * Class which extends Service in order to run in the background. Opens the camera and regularly
  * takes pictures which are later processed by a separate thread in order to recognize eventual
@@ -62,6 +67,7 @@ public class DetectorService extends Service {
     private static final long MAX_EXPOSURE_TIME = 1000000000;
     private static final float MAX_LENS_APERTURE = (float)1.4;
     private static final int MAX_ISO = 1600;
+    private static final int NOTIFICATION_ID = 0;
 
     private CameraDevice cameraDevice;
     private static boolean shutdown = false;
@@ -75,56 +81,107 @@ public class DetectorService extends Service {
     private Range<Long> exposureTimeRange;
     private float[] apertureSizeRange;
     private Range<Integer> ISORange;
+    private NotificationCompat.Builder notificationBuilder;
+    private long time = 0;
+    private ExecutorService imageConverterExecutor = Executors.newCachedThreadPool();
+    private ExecutorService luminescenceCalculationExecutror = Executors.newCachedThreadPool();
+    private ExecutorService jpegCreatorExecutor = Executors.newSingleThreadExecutor();
+    private boolean notificationShowed = false;
 
-    private Camera.PreviewCallback previewCallback = new Camera.PreviewCallback() {
+    private class imageConverter implements Runnable {
 
-        int maxValue = 0;
+        private byte[] yuvData;
+        private Camera camera;
+
+        imageConverter(byte[] b, Camera c) {
+            yuvData = b;
+            camera = c;
+        }
 
         @Override
-        public void onPreviewFrame(byte[] data, Camera camera) {
-            long time = System.nanoTime();
-
+        public void run () {
             // Convert the YUV preview frame to jpeg
             Camera.Size previewSize = camera.getParameters().getPreviewSize();
-            YuvImage yuvImage = new YuvImage(data, ImageFormat.NV21, previewSize.width, previewSize.height, null);
+            YuvImage yuvImage = new YuvImage(yuvData, ImageFormat.NV21, previewSize.width, previewSize.height, null);
             ByteArrayOutputStream byteArrayOS = new ByteArrayOutputStream();
             yuvImage.compressToJpeg(new Rect(0, 0, previewSize.width, previewSize.height), 100, byteArrayOS);
             byte[] jdata = byteArrayOS.toByteArray();
 
-            // Crate low res bitmap from jpeg data
+            // Crate low res bitmap from jpeg yuvData
             BitmapFactory.Options lowResOptions = new BitmapFactory.Options();
             lowResOptions.inSampleSize = 8;
             Bitmap lowResBitmap = BitmapFactory.decodeByteArray(jdata, 0, jdata.length, lowResOptions);
+            luminescenceCalculationExecutror.submit(new luminescenceCalculcation(lowResBitmap, jdata));
+        }
 
-            // Compute the highest sum of the RGB components for each pixel
+    }
+
+    private class luminescenceCalculcation implements Runnable {
+
+        private Bitmap lowResBitmap;
+        private byte[] jdata;
+
+        luminescenceCalculcation(Bitmap b, byte[] b1) {
+            lowResBitmap = b;
+            jdata = b1;
+        }
+
+        @Override
+        public void run() {
+            // Compute the luminance for each pixel
             int[] pixels = new int[lowResBitmap.getHeight() * lowResBitmap.getWidth()];
             lowResBitmap.getPixels(pixels, 0, lowResBitmap.getWidth(), 0, 0, lowResBitmap.getWidth(), lowResBitmap.getHeight());
-            int previewMaxValue = 0;
-            boolean triggerActivated = false;
-            for (int pixel : pixels) {
-                int sum = Color.red(pixel) + Color.green(pixel) + Color.blue(pixel);
-                if (maxValue == 0) {
-                    previewMaxValue = previewMaxValue > sum ? previewMaxValue : sum;
-                } else
-                    triggerActivated = sum > maxValue * 1.05;
-            }
-            maxValue = maxValue == 0 ? previewMaxValue : maxValue;
+            float luminance = 0;
 
-            // Save bitmap if first level trigger has detected a candidate
-            if (triggerActivated) {
-                try {
-                    File imageFile = createImageFile();
-                    FileOutputStream fileOutputStream = new FileOutputStream(imageFile);
-                    BitmapFactory.Options highResOptions = new BitmapFactory.Options();
-                    Bitmap highResBitmap = BitmapFactory.decodeByteArray(jdata, 0, jdata.length, highResOptions);
-                    highResBitmap.compress(Bitmap.CompressFormat.JPEG, 100, fileOutputStream);
-                    fileOutputStream.close();
-                } catch (IOException e) {
-                    String stackTrace = Log.getStackTraceString(e);
-                    Log.e("DetectorService", stackTrace);
-                }
+            for (int pixel : pixels) {
+                luminance = 0.2126f * Color.red(pixel) + 0.7152f * Color.green(pixel) + 0.0722f * Color.blue(pixel);
             }
-            Log.d("DetectorService", " " + (System.nanoTime() - time) / 1000000 + " ms maxValue " + maxValue);
+
+            Log.d("DetectorService", "Luminescence " + luminance);
+            if (luminance > 30)
+                jpegCreatorExecutor.submit(new jpegCreator(jdata));
+        }
+
+    }
+
+    private class jpegCreator implements Runnable {
+
+        private byte[] jdata;
+
+        jpegCreator(byte[] b) {
+            jdata = b;
+        }
+
+        @Override
+        public void run() {
+            try {
+                if (!notificationShowed) {
+                    NotificationManager notificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+                    notificationManager.notify(NOTIFICATION_ID, notificationBuilder.build());
+                    notificationShowed = true;
+                }
+                File imageFile = createImageFile();
+                FileOutputStream fileOutputStream = new FileOutputStream(imageFile);
+                BitmapFactory.Options highResOptions = new BitmapFactory.Options();
+                Bitmap highResBitmap = BitmapFactory.decodeByteArray(jdata, 0, jdata.length, highResOptions);
+                highResBitmap.compress(Bitmap.CompressFormat.JPEG, 100, fileOutputStream);
+                fileOutputStream.close();
+            } catch (IOException e) {
+                String stackTrace = Log.getStackTraceString(e);
+                Log.e("DetectorService", stackTrace);
+            }
+        }
+
+    }
+
+    private Camera.PreviewCallback previewCallback = new Camera.PreviewCallback() {
+
+        @Override
+        public void onPreviewFrame(byte[] data, Camera camera) {
+            imageConverterExecutor.submit(new imageConverter(data, camera));
+
+            Log.d("DetectorService", " " + (System.nanoTime() - time) / 1000000 + " ms");
+            time = System.nanoTime();
         }
     };
 
@@ -133,6 +190,12 @@ public class DetectorService extends Service {
 
         @Override
         public void run () {
+
+            notificationBuilder = new NotificationCompat.Builder(DetectorService.this)
+                    .setContentTitle("Trigger notification")
+                    .setContentText("Trigger activated")
+                    .setSmallIcon(R.drawable.trigger_event_icon);
+
             while (!shutdown) {
                 synchronized (captureThreadLock) {
                     try {
@@ -383,6 +446,7 @@ public class DetectorService extends Service {
     public int onStartCommand(@Nullable Intent intent, int flags, int startId) {
 
         captureThreadExecutor.submit(new CaptureThread());
+        Process.setThreadPriority(Process.THREAD_PRIORITY_FOREGROUND);
 
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) !=
                 PackageManager.PERMISSION_GRANTED) {
@@ -487,7 +551,8 @@ public class DetectorService extends Service {
                 parameters.setJpegQuality(100);
                 parameters.setAutoExposureLock(true);
                 parameters.setAutoWhiteBalanceLock(true);
-                parameters.setPreviewFrameRate(60);
+                parameters.setPreviewSize(1280, 720);
+                parameters.setPreviewFpsRange(24000,24000);
                 legacyCamera.setParameters(parameters);
                 legacyCamera.setDisplayOrientation(90);
             } catch (Exception e) {
