@@ -15,6 +15,10 @@ android {
                 cppFlags ""
             }
         }
+        ndk {
+            moduleName 'hello-world'
+            abiFilters "armeabi-v7a", "arm64-v8a"
+        }
     }
     buildTypes {
         release {

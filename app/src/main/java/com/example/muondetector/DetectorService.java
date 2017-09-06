@@ -109,7 +109,7 @@ public class DetectorService extends Service {
 
             // Crate low res bitmap from jpeg yuvData
             BitmapFactory.Options lowResOptions = new BitmapFactory.Options();
-            lowResOptions.inSampleSize = 8;
+            lowResOptions.inSampleSize = 4;
             Bitmap lowResBitmap = BitmapFactory.decodeByteArray(jdata, 0, jdata.length, lowResOptions);
             luminescenceCalculationExecutror.submit(new luminescenceCalculcation(lowResBitmap, jdata));
         }
@@ -137,7 +137,7 @@ public class DetectorService extends Service {
                 luminance = 0.2126f * Color.red(pixel) + 0.7152f * Color.green(pixel) + 0.0722f * Color.blue(pixel);
             }
 
-            Log.d("DetectorService", "Luminescence " + luminance);
+            //Log.d("DetectorService", "Luminescence " + luminance);
             if (luminance > 30)
                 jpegCreatorExecutor.submit(new jpegCreator(jdata));
         }
@@ -551,7 +551,7 @@ public class DetectorService extends Service {
                 parameters.setJpegQuality(100);
                 parameters.setAutoExposureLock(true);
                 parameters.setAutoWhiteBalanceLock(true);
-                parameters.setPreviewSize(1280, 720);
+                parameters.setPreviewSize(640, 480);
                 parameters.setPreviewFpsRange(24000,24000);
                 legacyCamera.setParameters(parameters);
                 legacyCamera.setDisplayOrientation(90);

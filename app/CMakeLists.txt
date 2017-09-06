@@ -18,6 +18,14 @@ add_library( ARM
              src/main/jni/common.h )
 include_directories( src/main/assets/ )
 
+add_library( GLES_mali
+             SHARED
+             IMPORTED )
+set_target_properties( GLES_mali
+             PROPERTIES IMPORTED_LOCATION
+             ../../../../src/main/jniLibs/${ANDROID_ABI}/libGLES_mali.so )
+include_directories( OpenCL/include/ )
+
 # Searches for a specified prebuilt library and stores the path as a
 # variable. Because CMake includes system libraries in the search path by
 # default, you only need to specify the name of the public NDK library
@@ -34,4 +42,6 @@ find_library( # Sets the name of the path variable.
 # Specifies libraries CMake should link to your target library. You
 # can link multiple libraries, such as libraries you define in this
 # build script, prebuilt third-party libraries, or system libraries.
+
+target_link_libraries ( ARM log GLES_mali)
 
