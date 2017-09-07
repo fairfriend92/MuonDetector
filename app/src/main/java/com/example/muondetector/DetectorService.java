@@ -7,7 +7,6 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.graphics.Color;
 import android.graphics.ImageFormat;
 import android.graphics.Rect;
 import android.graphics.YuvImage;
@@ -67,7 +66,11 @@ public class DetectorService extends Service {
     private static final long MAX_EXPOSURE_TIME = 1000000000;
     private static final float MAX_LENS_APERTURE = (float)1.4;
     private static final int MAX_ISO = 1600;
+
     private static final int NOTIFICATION_ID = 0;
+    private static final int PREVIEW_WIDTH = 640;
+    private static final int PREVIEW_HEIGHT = 480;
+    private static final int IN_SAMPLE_SIZE = 4;
 
     private CameraDevice cameraDevice;
     private static boolean shutdown = false;
@@ -76,6 +79,7 @@ public class DetectorService extends Service {
     static Camera legacyCamera; // Use the old camera api in case the hardware does not support iso control using camera2
     private static BlockingQueue<byte[]> captureDataQueue = new ArrayBlockingQueue<>(32);
     private static final Object captureThreadLock = new Object();
+
     private List<CaptureResult.Key<?>> captureResultKeys;
     private List<CaptureRequest.Key<?>> captureRequestKeys;
     private Range<Long> exposureTimeRange;
@@ -84,9 +88,23 @@ public class DetectorService extends Service {
     private NotificationCompat.Builder notificationBuilder;
     private long time = 0;
     private ExecutorService imageConverterExecutor = Executors.newCachedThreadPool();
-    private ExecutorService luminescenceCalculationExecutror = Executors.newCachedThreadPool();
+    private ExecutorService luminescenceCalculationExecutror = Executors.newSingleThreadExecutor();
     private ExecutorService jpegCreatorExecutor = Executors.newSingleThreadExecutor();
     private boolean notificationShowed = false;
+    private long openCLObject;
+    private BlockingQueue<ImageInfo> imageInfos = new ArrayBlockingQueue<>(32);
+
+    private class ImageInfo {
+
+        private Bitmap bitmap;
+        private byte[] data;
+
+        ImageInfo(Bitmap b, byte[] b1) {
+            bitmap = b;
+            data = b1;
+        }
+
+    }
 
     private class imageConverter implements Runnable {
 
@@ -109,37 +127,60 @@ public class DetectorService extends Service {
 
             // Crate low res bitmap from jpeg yuvData
             BitmapFactory.Options lowResOptions = new BitmapFactory.Options();
-            lowResOptions.inSampleSize = 4;
+            lowResOptions.inSampleSize = IN_SAMPLE_SIZE;
             Bitmap lowResBitmap = BitmapFactory.decodeByteArray(jdata, 0, jdata.length, lowResOptions);
-            luminescenceCalculationExecutror.submit(new luminescenceCalculcation(lowResBitmap, jdata));
+
+            // Put the bitmap and the data in the buffer of the separate thread computing the luminiscence
+            try {
+                imageInfos.put(new ImageInfo(lowResBitmap, jdata));
+                Log.d("DetectorService", " "  + imageInfos.remainingCapacity());
+            } catch (InterruptedException e) {
+                String stackTrace = Log.getStackTraceString(e);
+                Log.e("DetectorService", stackTrace);
+            }
         }
 
     }
 
     private class luminescenceCalculcation implements Runnable {
 
-        private Bitmap lowResBitmap;
-        private byte[] jdata;
+        private ImageInfo imageInfo;
+        private BlockingQueue<ImageInfo> imageInfos;
 
-        luminescenceCalculcation(Bitmap b, byte[] b1) {
-            lowResBitmap = b;
-            jdata = b1;
+        luminescenceCalculcation(BlockingQueue<ImageInfo> b) {
+            imageInfos = b;
         }
 
         @Override
         public void run() {
-            // Compute the luminance for each pixel
-            int[] pixels = new int[lowResBitmap.getHeight() * lowResBitmap.getWidth()];
-            lowResBitmap.getPixels(pixels, 0, lowResBitmap.getWidth(), 0, 0, lowResBitmap.getWidth(), lowResBitmap.getHeight());
-            float luminance = 0;
+            while (!shutdown) {
+                // Compute the luminance for each pixel
+                try {
+                    imageInfo = imageInfos.take();
+                } catch (InterruptedException e) {
+                    String stackTrace = Log.getStackTraceString(e);
+                    Log.e("DetectorService", stackTrace);
+                }
+                Bitmap lowResBitmap = imageInfo.bitmap;
+                int scaledWidth = lowResBitmap.getWidth() / IN_SAMPLE_SIZE;
+                int scaledHeight = lowResBitmap.getHeight() / IN_SAMPLE_SIZE;
+                int[] pixels = new int[scaledWidth * scaledHeight];
+                lowResBitmap.getPixels(pixels, 0, scaledWidth, 0, 0, scaledWidth, scaledHeight);
+                /*
+                float luminance = 0;
 
-            for (int pixel : pixels) {
-                luminance = 0.2126f * Color.red(pixel) + 0.7152f * Color.green(pixel) + 0.0722f * Color.blue(pixel);
+                for (int pixel : pixels) {
+                    luminance = 0.2126f * Color.red(pixel) + 0.7152f * Color.green(pixel) + 0.0722f * Color.blue(pixel);
+                }
+
+                //Log.d("DetectorService", "Luminescence " + luminance);
+                if (luminance > 30)
+                    jpegCreatorExecutor.submit(new jpegCreator(jdata));
+                */
+
+                if (computeLuminescence(openCLObject, pixels, PREVIEW_WIDTH, PREVIEW_HEIGHT, IN_SAMPLE_SIZE))
+                    jpegCreatorExecutor.submit(new jpegCreator(imageInfo.data));
             }
-
-            //Log.d("DetectorService", "Luminescence " + luminance);
-            if (luminance > 30)
-                jpegCreatorExecutor.submit(new jpegCreator(jdata));
         }
 
     }
@@ -444,6 +485,11 @@ public class DetectorService extends Service {
 
     @Override
     public int onStartCommand(@Nullable Intent intent, int flags, int startId) {
+        assert intent != null;
+        String kernel = intent.getStringExtra("Kernel");
+        openCLObject = initializeOpenCL(kernel, PREVIEW_WIDTH, PREVIEW_HEIGHT, IN_SAMPLE_SIZE);
+
+        luminescenceCalculationExecutror.submit(new luminescenceCalculcation(imageInfos));
 
         captureThreadExecutor.submit(new CaptureThread());
         Process.setThreadPriority(Process.THREAD_PRIORITY_FOREGROUND);
@@ -551,7 +597,7 @@ public class DetectorService extends Service {
                 parameters.setJpegQuality(100);
                 parameters.setAutoExposureLock(true);
                 parameters.setAutoWhiteBalanceLock(true);
-                parameters.setPreviewSize(640, 480);
+                parameters.setPreviewSize(PREVIEW_WIDTH, PREVIEW_HEIGHT);
                 parameters.setPreviewFpsRange(24000,24000);
                 legacyCamera.setParameters(parameters);
                 legacyCamera.setDisplayOrientation(90);
@@ -564,4 +610,6 @@ public class DetectorService extends Service {
         return START_STICKY;
     }
 
+    public native long initializeOpenCL(String kernel, int previewWidth, int previewHeight, int inSampleSize);
+    public native boolean computeLuminescence(long openCLObject, int[] pixels, int previewWidth, int previewHeight, int inSampleSize);
 }
