@@ -69,7 +69,7 @@ extern "C" jlong Java_com_example_muondetector_DetectorService_initializeOpenCL 
     clGetDeviceInfo(obj->device, CL_DEVICE_ADDRESS_BITS, sizeof(cl_uint), &addressBits, NULL);
     LOGD("Device info: Device address bits: %d", addressBits);
 
-    obj->kernel = clCreateKernel(obj->program, "simulate_dynamics", &obj->errorNumber);
+    obj->kernel = clCreateKernel(obj->program, "compute_luminescence", &obj->errorNumber);
     if (!checkSuccess(obj->errorNumber))
     {
         cleanUpOpenCL(obj->context, obj->commandQueue, obj->program, obj->kernel, obj->memoryObjects, obj->numberOfMemoryObjects);
@@ -82,25 +82,39 @@ extern "C" jlong Java_com_example_muondetector_DetectorService_initializeOpenCL 
     bool createMemoryObjectsSuccess = true;
     obj->numberOfMemoryObjects= 2;
 
-    // Allocate memory from the host
-    /*
-    float *neuronalDynVar = new float[3 * jNumOfNeurons];
-    obj->neuronalDynVar = neuronalDynVar;
-     */
-
     // Ask the OpenCL implementation to allocate buffers to pass data to and from the kernel
     obj->memoryObjects[0] = clCreateBuffer(obj->context, CL_MEM_READ_ONLY| CL_MEM_ALLOC_HOST_PTR,
                                            previewBufferSize, NULL, &obj->errorNumber);
     createMemoryObjectsSuccess &= checkSuccess(obj->errorNumber);
 
-    obj->memoryObjects[1] = clCreateBuffer(obj->context, CL_MEM_WRITE_ONLY| CL_MEM_ALLOC_HOST_PTR,
-                                           sizeof(cl_bool), NULL, &obj->errorNumber);
+    obj->memoryObjects[1] = clCreateBuffer(obj->context, CL_MEM_READ_WRITE| CL_MEM_ALLOC_HOST_PTR,
+                                           sizeof(cl_int), NULL, &obj->errorNumber);
     createMemoryObjectsSuccess &= checkSuccess(obj->errorNumber);
 
     if (!createMemoryObjectsSuccess)
     {
         cleanUpOpenCL(obj->context, obj->commandQueue, obj->program, obj->kernel, obj->memoryObjects, obj->numberOfMemoryObjects);
         LOGE("Failed to create OpenCL buffer");
+    }
+
+    // Initialize the buffer holding the result of the computation to the default value
+    bool mapMemoryObjectsSuccess = true;
+    obj->result = (cl_int *)clEnqueueMapBuffer(obj->commandQueue, obj->memoryObjects[1], CL_TRUE, CL_MAP_WRITE, 0,
+                                               sizeof(cl_int), 0, NULL, NULL, &obj->errorNumber);
+    mapMemoryObjectsSuccess &= checkSuccess(obj->errorNumber);
+
+    if (!mapMemoryObjectsSuccess)
+    {
+        cleanUpOpenCL(obj->context, obj->commandQueue, obj->program, obj->kernel, obj->memoryObjects, obj->numberOfMemoryObjects);
+        LOGE("Failed to map buffer");
+    }
+
+    obj->result[0] = 0;
+
+    if (!checkSuccess(clEnqueueUnmapMemObject(obj->commandQueue, obj->memoryObjects[1], obj->result, 0, NULL, NULL)))
+    {
+        cleanUpOpenCL(obj->context, obj->commandQueue, obj->program, obj->kernel, obj->memoryObjects, obj->numberOfMemoryObjects);
+        LOGE("Unmap memory objects failed");
     }
 
     return (long) obj;
@@ -125,9 +139,8 @@ extern "C" jboolean Java_com_example_muondetector_DetectorService_computeLumines
      * Map the buffer, initialize it and finally unmap it
      */
 
-    bool mapMemoryObjectsSuccess = true;
-
     // Map the buffer
+    bool mapMemoryObjectsSuccess = true;
     obj->pixels = (cl_int *)clEnqueueMapBuffer(obj->commandQueue, obj->memoryObjects[0], CL_TRUE, CL_MAP_WRITE, 0,
                                                previewBufferSize, 0, NULL, NULL, &obj->errorNumber);
     mapMemoryObjectsSuccess &= checkSuccess(obj->errorNumber);
@@ -255,8 +268,8 @@ extern "C" jboolean Java_com_example_muondetector_DetectorService_computeLumines
      * Map the result buffer so that the flag triggerActivated can be read and passed to the Java side
      */
 
-    obj->result = (cl_bool *)clEnqueueMapBuffer(obj->commandQueue, obj->memoryObjects[1], CL_TRUE, CL_MAP_READ, 0,
-                                                sizeof(cl_bool), 0, NULL, NULL, &obj->errorNumber);
+    obj->result = (cl_int *)clEnqueueMapBuffer(obj->commandQueue, obj->memoryObjects[1], CL_TRUE, CL_MAP_READ | CL_MAP_WRITE, 0,
+                                                sizeof(cl_int), 0, NULL, NULL, &obj->errorNumber);
     mapMemoryObjectsSuccess &= checkSuccess(obj->errorNumber);
 
     if (!mapMemoryObjectsSuccess)
@@ -265,7 +278,9 @@ extern "C" jboolean Java_com_example_muondetector_DetectorService_computeLumines
         LOGE("Failed to map buffer");
     }
 
-    triggerActivated = (jboolean)*obj->result;
+    float resultFloat = (float)(obj->result[0]) / 32768.0f;
+    triggerActivated = (jboolean)(resultFloat > 30.0f);
+    obj->result[0] = 0;
 
     if (!checkSuccess(clEnqueueUnmapMemObject(obj->commandQueue, obj->memoryObjects[1], obj->result, 0, NULL, NULL)))
     {

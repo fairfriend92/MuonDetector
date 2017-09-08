@@ -1,14 +1,9 @@
 package com.example.muondetector;
 
-import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
-import android.graphics.Canvas;
-import android.graphics.Color;
-import android.hardware.Camera;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
 import android.os.CountDownTimer;
@@ -16,25 +11,21 @@ import android.support.v4.content.LocalBroadcastManager;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.util.Log;
-import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
-import android.view.View;
-import android.widget.TextView;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Scanner;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
 public class MainActivity extends AppCompatActivity {
-
-    // Used to load the 'native-lib' library on application startup.
-    static {
-        System.loadLibrary("native-lib");
-    }
 
     /*
      * Class which provides GPU info
@@ -92,66 +83,18 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private class CountdownToStartService extends CountDownTimer {
-
-        CountdownToStartService(long millisInFuture, long countDownInterval) {
-
-            super(millisInFuture, countDownInterval);
-        }
-
-        @Override
-        public void onTick(long millisUntilFinished) {
-
-        }
-
-        @Override
-        public void onFinish() {
-            // Get the GPU model
-            SharedPreferences prefs = getSharedPreferences("GPUinfo", Context.MODE_PRIVATE);
-            String renderer = prefs.getString("RENDERER", null);
-            assert renderer != null;
-
-            // Load the appropriate OpenCL kernel based on GPU model
-            String kernel; // The string used to hold the .cl kernel file
-            switch (renderer) {
-                case "Mali-T880":
-                case "Mali-T720":
-                    kernel = loadKernelFromAsset(getInputStream("compLumi_vec4.cl"));
-                    break;
-                default:
-                    kernel = loadKernelFromAsset(getInputStream("kernel.cl"));
-                    break;
-            }
-
-            // Load the appropriate OpenCL library based on the GPU vendor
-            loadGLLibrary();
-
-            // Display again the main layout once the retrieval of the info from the OpenGL context is done
-            setContentView(R.layout.activity_main);
-            setRequestedOrientation (ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-
-            // Create the intent for the main service and bundle the string containing the OpenCL kernel
-            Intent detectorIntent = new Intent(MainActivity.this, DetectorService.class);
-            detectorIntent.putExtra(kernel, "Kernel");
-            startService(detectorIntent);
-
-            // Create surface to preview the capture
-            SurfaceView preview = (SurfaceView)findViewById(R.id.previewView);
-            SurfaceHolder previewHolder = preview.getHolder();
-            previewHolder.addCallback(DetectorService.surfaceHolderCallback);
-        }
-    }
-
+    // TODO: Make this method static?
     private void loadGLLibrary() {
         SharedPreferences prefs = getSharedPreferences("GPUinfo", Context.MODE_PRIVATE);
         String vendor = prefs.getString("VENDOR", null);
         assert vendor != null;
         switch (vendor) {
-            case "ARM":try {
-                System.loadLibrary("ARM");
-            } catch (UnsatisfiedLinkError linkError) {
-                Log.e("Unsatisfied link", "libGLES_mali.so not found");
-            }
+            case "ARM":
+                try {
+                    System.loadLibrary("ARM");
+                } catch (UnsatisfiedLinkError linkError) {
+                    Log.e("Unsatisfied link", "libGLES_mali.so not found");
+                }
                 break;
             case "Qualcomm":
                 try {
@@ -167,28 +110,47 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    public String kernel;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
-        setRequestedOrientation (ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-
         // OpenGL surface view
         MyGLSurfaceView mGlSurfaceView = new MyGLSurfaceView(this);
 
         // Set on display the OpenGL surface view in order to call the OpenGL renderer and retrieve the GPU info
         setContentView(mGlSurfaceView);
 
-        // The OpenGL context needs time to be initialized, therefore wait before retrieving the renderer
-        CountdownToStartService timerToSimulation = new CountdownToStartService(1000, 500);
-        timerToSimulation.start();
+        ExecutorService executorService = Executors.newSingleThreadExecutor();
+        Future<?> future = executorService.submit(new RendererRetriever());
+
+        try {
+            future.get(2000, TimeUnit.MILLISECONDS);
+        } catch (Exception e) {
+            String stackTrace = Log.getStackTraceString(e);
+            Log.e("MainActivity", stackTrace);
+        }
+
+        // Display the main view
+        setContentView(R.layout.activity_main);
+        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+
+        // Create the intent for the main service and bundle the string containing the OpenCL kernel
+        Intent detectorIntent = new Intent(MainActivity.this, DetectorService.class);
+        detectorIntent.putExtra("Kernel", kernel);
+        MainActivity.this.startService(detectorIntent);
+
+        // Create surface to preview the capture
+        SurfaceView preview = (SurfaceView) findViewById(R.id.previewView);
+        SurfaceHolder previewHolder = preview.getHolder();
+        previewHolder.addCallback(DetectorService.surfaceHolderCallback);
     }
 
     /*
      * Get an input stream from the .cl file
      */
 
-    public InputStream getInputStream(String kernelName) {
+    private InputStream getInputStream(String kernelName) {
         try {
             return getAssets().open(kernelName);
         } catch (IOException ioException) {
@@ -201,15 +163,49 @@ public class MainActivity extends AppCompatActivity {
      * Scan the .cl file and turn it into a string
      */
 
-    static String loadKernelFromAsset(InputStream inputStream) {
+    private String loadKernelFromAsset(InputStream inputStream) {
         Scanner scanner = new Scanner(inputStream).useDelimiter("\\A");
         return scanner.hasNext() ? scanner.next() : " ";
     }
 
     @Override
-    protected void onDestroy () {
+    protected void onDestroy() {
         super.onDestroy();
         DetectorService.legacyCamera.release();
     }
 
+    private class RendererRetriever implements Runnable {
+
+
+        @Override
+        public void run() {
+            // The OpenGL context needs time to be initialized, therefore wait before retrieving the renderer
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                String stackTrace = Log.getStackTraceString(e);
+                Log.e("MainActivity", stackTrace);
+            }
+
+            // Get the GPU model
+            SharedPreferences prefs = getSharedPreferences("GPUinfo", Context.MODE_PRIVATE);
+            String renderer = prefs.getString("RENDERER", null);
+            assert renderer != null;
+
+            // Load the appropriate OpenCL kernel based on GPU model
+            switch (renderer) {
+                case "Mali-T880":
+                case "Mali-T720":
+                    kernel = loadKernelFromAsset(getInputStream("compLumi_vec4.cl"));
+                    break;
+                default:
+                    kernel = loadKernelFromAsset(getInputStream("kernel.cl"));
+                    break;
+            }
+
+            // Load the appropriate OpenCL library based on the GPU vendor
+            loadGLLibrary();
+        }
+    }
 }
+

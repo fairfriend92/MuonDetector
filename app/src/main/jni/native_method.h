@@ -29,6 +29,6 @@ struct OpenCLObject {
 
     // Pointers to the memory buffers
     cl_int *pixels;
-    cl_bool *result;
+    cl_int *result;
 };
 

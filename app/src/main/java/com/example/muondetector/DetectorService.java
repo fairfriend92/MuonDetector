@@ -70,7 +70,7 @@ public class DetectorService extends Service {
     private static final int NOTIFICATION_ID = 0;
     private static final int PREVIEW_WIDTH = 640;
     private static final int PREVIEW_HEIGHT = 480;
-    private static final int IN_SAMPLE_SIZE = 4;
+    private static final int IN_SAMPLE_SIZE = 1;
 
     private CameraDevice cameraDevice;
     private static boolean shutdown = false;
@@ -106,12 +106,12 @@ public class DetectorService extends Service {
 
     }
 
-    private class imageConverter implements Runnable {
+    private class ImageConverter implements Runnable {
 
         private byte[] yuvData;
         private Camera camera;
 
-        imageConverter(byte[] b, Camera c) {
+        ImageConverter(byte[] b, Camera c) {
             yuvData = b;
             camera = c;
         }
@@ -133,7 +133,7 @@ public class DetectorService extends Service {
             // Put the bitmap and the data in the buffer of the separate thread computing the luminiscence
             try {
                 imageInfos.put(new ImageInfo(lowResBitmap, jdata));
-                Log.d("DetectorService", " "  + imageInfos.remainingCapacity());
+                //Log.d("DetectorService", "Remaining capacity "  + imageInfos.remainingCapacity());
             } catch (InterruptedException e) {
                 String stackTrace = Log.getStackTraceString(e);
                 Log.e("DetectorService", stackTrace);
@@ -142,12 +142,12 @@ public class DetectorService extends Service {
 
     }
 
-    private class luminescenceCalculcation implements Runnable {
+    private class LuminescenceCalculation implements Runnable {
 
         private ImageInfo imageInfo;
         private BlockingQueue<ImageInfo> imageInfos;
 
-        luminescenceCalculcation(BlockingQueue<ImageInfo> b) {
+        LuminescenceCalculation(BlockingQueue<ImageInfo> b) {
             imageInfos = b;
         }
 
@@ -219,7 +219,7 @@ public class DetectorService extends Service {
 
         @Override
         public void onPreviewFrame(byte[] data, Camera camera) {
-            imageConverterExecutor.submit(new imageConverter(data, camera));
+            imageConverterExecutor.submit(new ImageConverter(data, camera));
 
             Log.d("DetectorService", " " + (System.nanoTime() - time) / 1000000 + " ms");
             time = System.nanoTime();
@@ -256,7 +256,7 @@ public class DetectorService extends Service {
     static SurfaceHolder.Callback surfaceHolderCallback = new SurfaceHolder.Callback() {
         @Override
         public void surfaceCreated(SurfaceHolder holder) {
-            //Log.d("DetectorService", "surfaceHolderCallback surfaceCreated");
+            Log.d("DetectorService", "surfaceHolderCallback surfaceCreated");
             if (streamConfigMap != null) { // Code executes only if camera2 is being used
                 Size previewSurfaceSize = streamConfigMap.getOutputSizes(SurfaceHolder.class)[0]; // Use the highest resolution for the preview surface
                 holder.setFixedSize(previewSurfaceSize.getWidth(), previewSurfaceSize.getHeight());
@@ -266,7 +266,7 @@ public class DetectorService extends Service {
 
         @Override
         public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
-            //Log.d("DetectorService", "surfaceHolderCallback surfaceChanged");
+            Log.d("DetectorService", "surfaceHolderCallback surfaceChanged");
             assert holder.getSurface() != null;
             try {
                 legacyCamera.stopPreview();
@@ -289,6 +289,7 @@ public class DetectorService extends Service {
         @Override
         public void surfaceDestroyed(SurfaceHolder holder) {
             //Log.d("DetectorService", "surfaceHolderCallback surfaceDestroyed");
+            // TODO: Close OpenCL here?
         }
     };
 
@@ -489,7 +490,7 @@ public class DetectorService extends Service {
         String kernel = intent.getStringExtra("Kernel");
         openCLObject = initializeOpenCL(kernel, PREVIEW_WIDTH, PREVIEW_HEIGHT, IN_SAMPLE_SIZE);
 
-        luminescenceCalculationExecutror.submit(new luminescenceCalculcation(imageInfos));
+        luminescenceCalculationExecutror.submit(new LuminescenceCalculation(imageInfos));
 
         captureThreadExecutor.submit(new CaptureThread());
         Process.setThreadPriority(Process.THREAD_PRIORITY_FOREGROUND);
