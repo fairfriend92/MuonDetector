@@ -34,7 +34,7 @@ extern "C" jlong Java_com_example_muondetector_DetectorService_initializeOpenCL 
 
     /*
      * Query the device to find various information. These are merely indicative since we must account for the
-     * complexity of the Kernel. For more information look at clGetKernelWorkGroupInfo in the computeLuminescence method.
+     * complexity of the Kernel. For more information look at clGetKernelWorkGroupInfo in the luminescenceAboveThreshold method.
      */
 
     size_t maxWorkItems[3];
@@ -120,7 +120,7 @@ extern "C" jlong Java_com_example_muondetector_DetectorService_initializeOpenCL 
     return (long) obj;
 }
 
-extern "C" jboolean Java_com_example_muondetector_DetectorService_computeLuminescence(
+extern "C" jboolean Java_com_example_muondetector_DetectorService_luminescenceAboveThreshold(
         JNIEnv *env, jobject thiz, jlong jOpenCLObject, jintArray jPixels, jint jPreviewWidth, jint jPreviewHeight,
         jint inSampleSize) {
 
@@ -295,7 +295,7 @@ extern "C" jboolean Java_com_example_muondetector_DetectorService_computeLumines
     return triggerActivated;
 }
 
-extern "C" void Java_com_example_overmind_SimulationService_closeOpenCL(
+extern "C" void Java_com_example_muondetector_DetectorService_closeOpenCL(
         JNIEnv *env, jobject thiz,  jlong jOpenCLObject) {
 
     struct OpenCLObject *obj;

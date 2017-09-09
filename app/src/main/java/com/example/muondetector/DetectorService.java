@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Color;
 import android.graphics.ImageFormat;
 import android.graphics.Rect;
 import android.graphics.YuvImage;
@@ -46,12 +47,13 @@ import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-
-import static java.lang.Math.abs;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Class which extends Service in order to run in the background. Opens the camera and regularly
@@ -68,43 +70,57 @@ public class DetectorService extends Service {
     private static final int MAX_ISO = 1600;
 
     private static final int NOTIFICATION_ID = 0;
+    private static final int SERVICE_NOTIFICATION_ID = 1;
     private static final int PREVIEW_WIDTH = 640;
     private static final int PREVIEW_HEIGHT = 480;
     private static final int IN_SAMPLE_SIZE = 1;
+    private static final int FRAME_RATE = 24;
+    private static final int FRAME_RATE_MIN = 15;
+    private static final long NULL_VALUE = 0;
 
-    private CameraDevice cameraDevice;
     private static boolean shutdown = false;
+    private CameraDevice cameraDevice;
     private static StreamConfigurationMap streamConfigMap = null;
     private static List<Surface> outputsList = Collections.synchronizedList(new ArrayList<Surface>(3)); // List of surfaces to draw the capture onto
-    static Camera legacyCamera; // Use the old camera api in case the hardware does not support iso control using camera2
-    private static BlockingQueue<byte[]> captureDataQueue = new ArrayBlockingQueue<>(32);
     private static final Object captureThreadLock = new Object();
+    static Camera legacyCamera; // Use the old camera api in case the hardware does not support iso control using camera2
+    private static String kernel;
+
+    /* Camera2 related fields */
 
     private List<CaptureResult.Key<?>> captureResultKeys;
     private List<CaptureRequest.Key<?>> captureRequestKeys;
     private Range<Long> exposureTimeRange;
     private float[] apertureSizeRange;
     private Range<Integer> ISORange;
-    private NotificationCompat.Builder notificationBuilder;
-    private long time = 0;
+
+    /* Fields related to the threading of the application */
+
+    // Handler for tasks that cannot be executed immediately due to buffer overflow
+    private ThreadPoolExecutor.AbortPolicy rejectedExecutionHandler = new ThreadPoolExecutor.AbortPolicy();
+
+    // Buffer for the tasks to be executed
+    private BlockingQueue<Runnable> luminescenceCalculatorQueue = new LinkedBlockingQueue<>(32);
+    private BlockingQueue<Runnable> GPUschedulerQueue = new LinkedBlockingQueue<>(32);
+
+    // Executors
+    private ExecutorService captureThreadExecutor = Executors.newSingleThreadExecutor();
     private ExecutorService imageConverterExecutor = Executors.newCachedThreadPool();
-    private ExecutorService luminescenceCalculationExecutror = Executors.newSingleThreadExecutor();
+    private ThreadPoolExecutor luminescenceCalculatorExec =
+            new ThreadPoolExecutor(8, 16, 1, TimeUnit.SECONDS, luminescenceCalculatorQueue, rejectedExecutionHandler);
+    private ThreadPoolExecutor GPUkernelSchedulerExec =
+            new ThreadPoolExecutor(1, 1, 1, TimeUnit.SECONDS, GPUschedulerQueue, rejectedExecutionHandler);
     private ExecutorService jpegCreatorExecutor = Executors.newSingleThreadExecutor();
+
+    private NotificationCompat.Builder notificationBuilder;
     private boolean notificationShowed = false;
-    private long openCLObject;
-    private BlockingQueue<ImageInfo> imageInfos = new ArrayBlockingQueue<>(32);
+    private long openCLObject = 0;
+    private volatile boolean bufferUnderPressure = false;
 
-    private class ImageInfo {
-
-        private Bitmap bitmap;
-        private byte[] data;
-
-        ImageInfo(Bitmap b, byte[] b1) {
-            bitmap = b;
-            data = b1;
-        }
-
-    }
+    /*
+    Converts the image from YUV to JPEG and send the data to be processed by the GPU or, if the GPU
+    is busy, to a separate CPU thread.
+     */
 
     private class ImageConverter implements Runnable {
 
@@ -132,9 +148,19 @@ public class DetectorService extends Service {
 
             // Put the bitmap and the data in the buffer of the separate thread computing the luminiscence
             try {
-                imageInfos.put(new ImageInfo(lowResBitmap, jdata));
-                //Log.d("DetectorService", "Remaining capacity "  + imageInfos.remainingCapacity());
-            } catch (InterruptedException e) {
+                int capacity = GPUschedulerQueue.remainingCapacity();
+                int size = GPUschedulerQueue.size();
+                // If the buffer of the GPU kernels scheduler is under pressure launch a thread on
+                // the CPU to handle the processing
+                if (capacity > size / 3 && !bufferUnderPressure || capacity > size) {
+                    bufferUnderPressure = false;
+                    GPUkernelSchedulerExec.execute(new GPUscheduler(lowResBitmap, jdata));
+                } else if (capacity <= size / 3 || bufferUnderPressure) {
+                    Log.e("DetectorService", "Buffer capacity is < 1/4th of size: Use software computation");
+                    luminescenceCalculatorExec.execute(new LuminescenceCalculator(lowResBitmap, jdata));
+                    bufferUnderPressure = true;
+                }
+            } catch (RejectedExecutionException e) {
                 String stackTrace = Log.getStackTraceString(e);
                 Log.e("DetectorService", stackTrace);
             }
@@ -142,51 +168,71 @@ public class DetectorService extends Service {
 
     }
 
-    private class LuminescenceCalculation implements Runnable {
+    /*
+    Runnable class which computes the luminescence of a low res bitmap is GPU is under heavy stress
+    and cannot handle the computation itself.
+     */
 
-        private ImageInfo imageInfo;
-        private BlockingQueue<ImageInfo> imageInfos;
+    private class LuminescenceCalculator implements Runnable {
+        private Bitmap bitmap;
+        private byte[] data;
 
-        LuminescenceCalculation(BlockingQueue<ImageInfo> b) {
-            imageInfos = b;
+        LuminescenceCalculator(Bitmap bitmap, byte[] data) {
+            this.bitmap = bitmap;
+            this.data = data;
+        }
+
+        @Override
+        public void run () {
+            int scaledWidth = bitmap.getWidth() / IN_SAMPLE_SIZE;
+            int scaledHeight = bitmap.getHeight() / IN_SAMPLE_SIZE;
+            int[] pixels = new int[scaledWidth * scaledHeight];
+            bitmap.getPixels(pixels, 0, scaledWidth, 0, 0, scaledWidth, scaledHeight);
+            float luminance = 0;
+
+            // Compute the luminance for each pixel
+            for (int pixel : pixels) {
+                luminance = 0.2126f * Color.red(pixel) + 0.7152f * Color.green(pixel) + 0.0722f * Color.blue(pixel);
+            }
+
+            if (luminance > 30)
+                jpegCreatorExecutor.execute(new jpegCreator(data));
+        }
+    }
+
+    /*
+    Class which sends to the input data to the native side of the application which populate the
+    GPU buffer with said data and schedule the OpenCL kernels.
+     */
+
+    private class GPUscheduler implements Runnable {
+        private Bitmap bitmap;
+        private byte[] data;
+
+        GPUscheduler(Bitmap bitmap, byte[] data)
+        {
+            this.bitmap = bitmap;
+            this.data = data;
         }
 
         @Override
         public void run() {
-            while (!shutdown) {
-                // Compute the luminance for each pixel
-                try {
-                    imageInfo = imageInfos.take();
-                } catch (InterruptedException e) {
-                    String stackTrace = Log.getStackTraceString(e);
-                    Log.e("DetectorService", stackTrace);
-                }
-                Bitmap lowResBitmap = imageInfo.bitmap;
-                int scaledWidth = lowResBitmap.getWidth() / IN_SAMPLE_SIZE;
-                int scaledHeight = lowResBitmap.getHeight() / IN_SAMPLE_SIZE;
-                int[] pixels = new int[scaledWidth * scaledHeight];
-                lowResBitmap.getPixels(pixels, 0, scaledWidth, 0, 0, scaledWidth, scaledHeight);
-                /*
-                float luminance = 0;
+            int scaledWidth = bitmap.getWidth() / IN_SAMPLE_SIZE;
+            int scaledHeight = bitmap.getHeight() / IN_SAMPLE_SIZE;
+            int[] pixels = new int[scaledWidth * scaledHeight];
+            bitmap.getPixels(pixels, 0, scaledWidth, 0, 0, scaledWidth, scaledHeight);
 
-                for (int pixel : pixels) {
-                    luminance = 0.2126f * Color.red(pixel) + 0.7152f * Color.green(pixel) + 0.0722f * Color.blue(pixel);
-                }
-
-                //Log.d("DetectorService", "Luminescence " + luminance);
-                if (luminance > 30)
-                    jpegCreatorExecutor.submit(new jpegCreator(jdata));
-                */
-
-                if (computeLuminescence(openCLObject, pixels, PREVIEW_WIDTH, PREVIEW_HEIGHT, IN_SAMPLE_SIZE))
-                    jpegCreatorExecutor.submit(new jpegCreator(imageInfo.data));
-            }
+            if (luminescenceAboveThreshold(openCLObject, pixels, PREVIEW_WIDTH, PREVIEW_HEIGHT, IN_SAMPLE_SIZE))
+                jpegCreatorExecutor.execute(new jpegCreator(data));
         }
-
     }
 
-    private class jpegCreator implements Runnable {
+    /*
+    Class which creates a high res JPEG picture out of the bitmap data if the luminescence is above
+    threshold, and save it to the storage memory of the device
+     */
 
+    private class jpegCreator implements Runnable {
         private byte[] jdata;
 
         jpegCreator(byte[] b) {
@@ -196,6 +242,7 @@ public class DetectorService extends Service {
         @Override
         public void run() {
             try {
+                // If luminescence is above threshold create a notification. Do that only th first time
                 if (!notificationShowed) {
                     NotificationManager notificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
                     notificationManager.notify(NOTIFICATION_ID, notificationBuilder.build());
@@ -212,26 +259,38 @@ public class DetectorService extends Service {
                 Log.e("DetectorService", stackTrace);
             }
         }
-
     }
 
-    private Camera.PreviewCallback previewCallback = new Camera.PreviewCallback() {
+    private int frame = 0;
+    private long time = 0;
 
+    private Camera.PreviewCallback previewCallback = new Camera.PreviewCallback() {
         @Override
         public void onPreviewFrame(byte[] data, Camera camera) {
-            imageConverterExecutor.submit(new ImageConverter(data, camera));
+            imageConverterExecutor.execute(new ImageConverter(data, camera));
 
-            Log.d("DetectorService", " " + (System.nanoTime() - time) / 1000000 + " ms");
-            time = System.nanoTime();
+            if (++frame == FRAME_RATE) {
+                float timeMs = (System.nanoTime() - time) / 1000000; // Time in ms since the last time the average frame rate was updated
+                float framerate = (FRAME_RATE * 1000) / timeMs;
+                Log.d("DetectorService", "Average frame rate is " + framerate);
+                if (framerate < 10) { // If the framerate is below a certain threshold try to empty the buffer of the GPU scheduler to force hardware acceleration
+                    Log.e("DetectorService", "Framerate below minimum: clearing GPUscheduler buffer");
+                    GPUschedulerQueue.clear();
+                }
+                time = System.nanoTime();
+                frame = 0;
+            }
         }
     };
 
-    ExecutorService captureThreadExecutor = Executors.newSingleThreadExecutor();
-    private class CaptureThread implements Runnable {
+    /*
+    Separate thread whose only purpose is to restart the preview whenever the preview surface changes
+    (for example when the application is not in focus anymore)
+     */
 
+    private class CaptureThread implements Runnable {
         @Override
         public void run () {
-
             notificationBuilder = new NotificationCompat.Builder(DetectorService.this)
                     .setContentTitle("Trigger notification")
                     .setContentText("Trigger activated")
@@ -243,12 +302,14 @@ public class DetectorService extends Service {
                         captureThreadLock.wait();
                     } catch (InterruptedException e) {
                         String stackTrace = Log.getStackTraceString(e);
-                        Log.e("DetectorService", stackTrace);
+                        Log.e("DetzectorService", stackTrace);
                     }
                 }
 
-                legacyCamera.setPreviewCallback(previewCallback);
-                legacyCamera.startPreview();
+                if (!shutdown) {
+                    legacyCamera.setPreviewCallback(previewCallback);
+                    legacyCamera.startPreview();
+                }
             }
         }
     }
@@ -288,8 +349,7 @@ public class DetectorService extends Service {
 
         @Override
         public void surfaceDestroyed(SurfaceHolder holder) {
-            //Log.d("DetectorService", "surfaceHolderCallback surfaceDestroyed");
-            // TODO: Close OpenCL here?
+            //Log.d("DetectorService", "surfaceHolderCallback surfaceDestroyed");            
         }
     };
 
@@ -486,13 +546,17 @@ public class DetectorService extends Service {
 
     @Override
     public int onStartCommand(@Nullable Intent intent, int flags, int startId) {
+        NotificationCompat.Builder serviceNotificationBuiler = new NotificationCompat.Builder(DetectorService.this)
+                .setContentTitle("Muons detector")
+                .setContentText("Muons detector started")
+                .setSmallIcon(R.drawable.trigger_event_icon); // TODO: Change icon?
+        this.startForeground(SERVICE_NOTIFICATION_ID, serviceNotificationBuiler.build());
+
         assert intent != null;
-        String kernel = intent.getStringExtra("Kernel");
+        kernel = intent.getStringExtra("Kernel");
         openCLObject = initializeOpenCL(kernel, PREVIEW_WIDTH, PREVIEW_HEIGHT, IN_SAMPLE_SIZE);
 
-        luminescenceCalculationExecutror.submit(new LuminescenceCalculation(imageInfos));
-
-        captureThreadExecutor.submit(new CaptureThread());
+        captureThreadExecutor.execute(new CaptureThread());
         Process.setThreadPriority(Process.THREAD_PRIORITY_FOREGROUND);
 
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) !=
@@ -599,7 +663,7 @@ public class DetectorService extends Service {
                 parameters.setAutoExposureLock(true);
                 parameters.setAutoWhiteBalanceLock(true);
                 parameters.setPreviewSize(PREVIEW_WIDTH, PREVIEW_HEIGHT);
-                parameters.setPreviewFpsRange(24000,24000);
+                parameters.setPreviewFpsRange(FRAME_RATE_MIN * 1000, FRAME_RATE_MIN * 1000);
                 legacyCamera.setParameters(parameters);
                 legacyCamera.setDisplayOrientation(90);
             } catch (Exception e) {
@@ -611,6 +675,39 @@ public class DetectorService extends Service {
         return START_STICKY;
     }
 
+    @Override
+    public void onTaskRemoved(Intent intent) {
+        shutdown = true;
+        synchronized (captureThreadLock) {
+            captureThreadLock.notify();
+        }
+        captureThreadExecutor.shutdown();
+        imageConverterExecutor.shutdown();
+        GPUkernelSchedulerExec.shutdown();
+        luminescenceCalculatorExec.shutdown();
+        jpegCreatorExecutor.shutdown();
+        boolean executorsAreShutdown = true;
+        try {
+            executorsAreShutdown = captureThreadExecutor.awaitTermination(100, TimeUnit.MILLISECONDS);
+            executorsAreShutdown &= imageConverterExecutor.awaitTermination(100, TimeUnit.MILLISECONDS);
+            executorsAreShutdown &= GPUkernelSchedulerExec.awaitTermination(100, TimeUnit.MILLISECONDS);
+            executorsAreShutdown &= luminescenceCalculatorExec.awaitTermination(100, TimeUnit.MILLISECONDS);
+            executorsAreShutdown &= jpegCreatorExecutor.awaitTermination(100, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            String stackTrace = Log.getStackTraceString(e);
+            Log.e("DetectorService", stackTrace);
+        }
+        if (executorsAreShutdown)
+            Log.i("DetectorService", "All executors have shutdown properly");
+        else
+            Log.e("DetectorsService", "Not all executors have shutdown properly");
+        if (openCLObject != NULL_VALUE)
+            closeOpenCL(openCLObject);
+        shutdown = false;
+        stopSelf();
+    }
+
     public native long initializeOpenCL(String kernel, int previewWidth, int previewHeight, int inSampleSize);
-    public native boolean computeLuminescence(long openCLObject, int[] pixels, int previewWidth, int previewHeight, int inSampleSize);
+    public native boolean luminescenceAboveThreshold(long openCLObject, int[] pixels, int previewWidth, int previewHeight, int inSampleSize);
+    public native void closeOpenCL(long openCLObject);
 }

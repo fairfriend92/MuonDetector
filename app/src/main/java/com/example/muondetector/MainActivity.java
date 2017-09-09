@@ -110,7 +110,7 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    public String kernel;
+    private String kernel;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
