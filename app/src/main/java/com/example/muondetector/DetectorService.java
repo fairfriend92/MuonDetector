@@ -75,7 +75,7 @@ public class DetectorService extends Service {
     private static final int PREVIEW_HEIGHT = 480;
     private static final int IN_SAMPLE_SIZE = 1;
     private static final int FRAME_RATE = 24;
-    private static final int FRAME_RATE_MIN = 15;
+    private static final int FRAME_RATE_MIN = 16;
     private static final long NULL_VALUE = 0;
 
     private static boolean shutdown = false;
@@ -84,7 +84,6 @@ public class DetectorService extends Service {
     private static List<Surface> outputsList = Collections.synchronizedList(new ArrayList<Surface>(3)); // List of surfaces to draw the capture onto
     private static final Object captureThreadLock = new Object();
     static Camera legacyCamera; // Use the old camera api in case the hardware does not support iso control using camera2
-    private static String kernel;
 
     /* Camera2 related fields */
 
@@ -115,7 +114,8 @@ public class DetectorService extends Service {
     private NotificationCompat.Builder notificationBuilder;
     private boolean notificationShowed = false;
     private long openCLObject = 0;
-    private volatile boolean bufferUnderPressure = false;
+    private volatile boolean bufferUnderPressure = false; // Flag that indicates that the buffer of the GPUscheduler is almost full
+    private float averageLumi = 0.0f; // Average value of the luminescence sampled during the initial setup phase
 
     /*
     Converts the image from YUV to JPEG and send the data to be processed by the GPU or, if the GPU
@@ -150,12 +150,13 @@ public class DetectorService extends Service {
             try {
                 int capacity = GPUschedulerQueue.remainingCapacity();
                 int size = GPUschedulerQueue.size();
+                //Log.d("DetectorService", "GPUscheduler buffer capacity " + capacity);
                 // If the buffer of the GPU kernels scheduler is under pressure launch a thread on
                 // the CPU to handle the processing
                 if (capacity > size / 3 && !bufferUnderPressure || capacity > size) {
                     bufferUnderPressure = false;
                     GPUkernelSchedulerExec.execute(new GPUscheduler(lowResBitmap, jdata));
-                } else if (capacity <= size / 3 || bufferUnderPressure) {
+                } else if (capacity <= size / 3 && averageLumi != 0 || bufferUnderPressure) { // Can't launch the CPU thread it the average luminescence has not be sampled yet
                     Log.e("DetectorService", "Buffer capacity is < 1/4th of size: Use software computation");
                     luminescenceCalculatorExec.execute(new LuminescenceCalculator(lowResBitmap, jdata));
                     bufferUnderPressure = true;
@@ -205,6 +206,8 @@ public class DetectorService extends Service {
     GPU buffer with said data and schedule the OpenCL kernels.
      */
 
+    private int sampledValues = 0;
+
     private class GPUscheduler implements Runnable {
         private Bitmap bitmap;
         private byte[] data;
@@ -222,8 +225,15 @@ public class DetectorService extends Service {
             int[] pixels = new int[scaledWidth * scaledHeight];
             bitmap.getPixels(pixels, 0, scaledWidth, 0, 0, scaledWidth, scaledHeight);
 
-            if (luminescenceAboveThreshold(openCLObject, pixels, PREVIEW_WIDTH, PREVIEW_HEIGHT, IN_SAMPLE_SIZE))
+            float currentLumi = computeLuminescence(openCLObject, pixels, PREVIEW_WIDTH, PREVIEW_HEIGHT, IN_SAMPLE_SIZE);
+            int samplingTime = FRAME_RATE_MIN * 10;
+
+            if (++sampledValues < samplingTime) {
+                averageLumi += currentLumi;
+                averageLumi = sampledValues == samplingTime - 1 ? averageLumi / samplingTime : averageLumi;
+            } else if (computeLuminescence(openCLObject, pixels, PREVIEW_WIDTH, PREVIEW_HEIGHT, IN_SAMPLE_SIZE) >= averageLumi * 1.15)
                 jpegCreatorExecutor.execute(new jpegCreator(data));
+
         }
     }
 
@@ -272,8 +282,9 @@ public class DetectorService extends Service {
             if (++frame == FRAME_RATE) {
                 float timeMs = (System.nanoTime() - time) / 1000000; // Time in ms since the last time the average frame rate was updated
                 float framerate = (FRAME_RATE * 1000) / timeMs;
-                Log.d("DetectorService", "Average frame rate is " + framerate);
-                if (framerate < 10) { // If the framerate is below a certain threshold try to empty the buffer of the GPU scheduler to force hardware acceleration
+                Log.d("DetectorService", "Average frame rate is " + framerate + " fps average lumi is " + averageLumi);
+                // TODO: Give the option to chose the threshold from the main menu
+                if (framerate < 5) { // If the framerate is below a certain threshold try to empty the buffer of the GPU scheduler to force hardware acceleration
                     Log.e("DetectorService", "Framerate below minimum: clearing GPUscheduler buffer");
                     GPUschedulerQueue.clear();
                 }
@@ -553,7 +564,7 @@ public class DetectorService extends Service {
         this.startForeground(SERVICE_NOTIFICATION_ID, serviceNotificationBuiler.build());
 
         assert intent != null;
-        kernel = intent.getStringExtra("Kernel");
+        String kernel = intent.getStringExtra("Kernel");
         openCLObject = initializeOpenCL(kernel, PREVIEW_WIDTH, PREVIEW_HEIGHT, IN_SAMPLE_SIZE);
 
         captureThreadExecutor.execute(new CaptureThread());
@@ -663,9 +674,10 @@ public class DetectorService extends Service {
                 parameters.setAutoExposureLock(true);
                 parameters.setAutoWhiteBalanceLock(true);
                 parameters.setPreviewSize(PREVIEW_WIDTH, PREVIEW_HEIGHT);
-                parameters.setPreviewFpsRange(FRAME_RATE_MIN * 1000, FRAME_RATE_MIN * 1000);
+                parameters.setPreviewFpsRange(FRAME_RATE_MIN * 1000, FRAME_RATE * 1000);
                 legacyCamera.setParameters(parameters);
                 legacyCamera.setDisplayOrientation(90);
+                Log.d("DetectorService", "test");
             } catch (Exception e) {
                 String stackTrace = Log.getStackTraceString(e);
                 Log.e("DetectorService", stackTrace);
@@ -708,6 +720,6 @@ public class DetectorService extends Service {
     }
 
     public native long initializeOpenCL(String kernel, int previewWidth, int previewHeight, int inSampleSize);
-    public native boolean luminescenceAboveThreshold(long openCLObject, int[] pixels, int previewWidth, int previewHeight, int inSampleSize);
+    public native float computeLuminescence(long openCLObject, int[] pixels, int previewWidth, int previewHeight, int inSampleSize);
     public native void closeOpenCL(long openCLObject);
 }

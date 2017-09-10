@@ -27,6 +27,8 @@ import javax.microedition.khronos.opengles.GL10;
 
 public class MainActivity extends AppCompatActivity {
 
+    SharedPreferences prefs;
+
     /*
      * Class which provides GPU info
      */
@@ -42,13 +44,14 @@ public class MainActivity extends AppCompatActivity {
             Log.d("GL info", "gl extensions: " + gl.glGetString(GL10.GL_EXTENSIONS));
 
             // Store the needed GPU info in the preferences
-            SharedPreferences.Editor editor = getSharedPreferences("GPUinfo", Context.MODE_PRIVATE).edit();
+            SharedPreferences.Editor editor = prefs.edit();
             editor.putString("VENDOR", gl.glGetString(GL10.GL_VENDOR));
             editor.putString("RENDERER", gl.glGetString(GL10.GL_RENDERER));
             editor.apply();
 
             // Set the background frame color
             GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+            Log.d("MainActivity", "test");
         }
 
         @Override
@@ -85,7 +88,6 @@ public class MainActivity extends AppCompatActivity {
 
     // TODO: Make this method static?
     private void loadGLLibrary() {
-        SharedPreferences prefs = getSharedPreferences("GPUinfo", Context.MODE_PRIVATE);
         String vendor = prefs.getString("VENDOR", null);
         assert vendor != null;
         switch (vendor) {
@@ -115,6 +117,9 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        prefs = getSharedPreferences("GPUinfo", Context.MODE_PRIVATE);
+
         // OpenGL surface view
         MyGLSurfaceView mGlSurfaceView = new MyGLSurfaceView(this);
 
@@ -122,13 +127,15 @@ public class MainActivity extends AppCompatActivity {
         setContentView(mGlSurfaceView);
 
         ExecutorService executorService = Executors.newSingleThreadExecutor();
-        Future<?> future = executorService.submit(new RendererRetriever());
+        while (kernel == null) {
+            Future<?> future = executorService.submit(new RendererRetriever());
 
-        try {
-            future.get(2000, TimeUnit.MILLISECONDS);
-        } catch (Exception e) {
-            String stackTrace = Log.getStackTraceString(e);
-            Log.e("MainActivity", stackTrace);
+            try {
+                future.get(2000, TimeUnit.MILLISECONDS);
+            } catch (Exception e) {
+                String stackTrace = Log.getStackTraceString(e);
+                Log.e("MainActivity", stackTrace);
+            }
         }
 
         // Display the main view
@@ -188,7 +195,6 @@ public class MainActivity extends AppCompatActivity {
             }
 
             // Get the GPU model
-            SharedPreferences prefs = getSharedPreferences("GPUinfo", Context.MODE_PRIVATE);
             String renderer = prefs.getString("RENDERER", null);
             assert renderer != null;
 
@@ -199,7 +205,7 @@ public class MainActivity extends AppCompatActivity {
                     kernel = loadKernelFromAsset(getInputStream("compLumi_vec4.cl"));
                     break;
                 default:
-                    kernel = loadKernelFromAsset(getInputStream("kernel.cl"));
+                    kernel = loadKernelFromAsset(getInputStream("compLumi_vec4.cl"));
                     break;
             }
 
