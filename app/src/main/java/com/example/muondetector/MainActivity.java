@@ -7,6 +7,9 @@ import android.content.pm.ActivityInfo;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
 import android.os.CountDownTimer;
+import android.os.Handler;
+import android.os.HandlerThread;
+import android.os.Looper;
 import android.support.v4.content.LocalBroadcastManager;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
@@ -51,7 +54,6 @@ public class MainActivity extends AppCompatActivity {
 
             // Set the background frame color
             GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-            Log.d("MainActivity", "test");
         }
 
         @Override
@@ -112,13 +114,16 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private String kernel;
+    private HandlerThread handlerThread;
+
+    SurfaceView preview;
+    SurfaceHolder previewHolder;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        prefs = getSharedPreferences("GPUinfo", Context.MODE_PRIVATE);
+        prefs = this.getSharedPreferences("GPUinfo", Context.MODE_PRIVATE);
 
         // OpenGL surface view
         MyGLSurfaceView mGlSurfaceView = new MyGLSurfaceView(this);
@@ -126,30 +131,19 @@ public class MainActivity extends AppCompatActivity {
         // Set on display the OpenGL surface view in order to call the OpenGL renderer and retrieve the GPU info
         setContentView(mGlSurfaceView);
 
-        ExecutorService executorService = Executors.newSingleThreadExecutor();
-        while (kernel == null) {
-            Future<?> future = executorService.submit(new RendererRetriever());
-
-            try {
-                future.get(2000, TimeUnit.MILLISECONDS);
-            } catch (Exception e) {
-                String stackTrace = Log.getStackTraceString(e);
-                Log.e("MainActivity", stackTrace);
-            }
-        }
-
         // Display the main view
         setContentView(R.layout.activity_main);
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
 
-        // Create the intent for the main service and bundle the string containing the OpenCL kernel
-        Intent detectorIntent = new Intent(MainActivity.this, DetectorService.class);
-        detectorIntent.putExtra("Kernel", kernel);
-        MainActivity.this.startService(detectorIntent);
+        handlerThread = new HandlerThread("RendererRetrieverThread");
+        handlerThread.start();
+        Looper looper = handlerThread.getLooper();
+        Handler handler = new Handler(looper);
+        handler.post(new RendererRetriever());
 
         // Create surface to preview the capture
-        SurfaceView preview = (SurfaceView) findViewById(R.id.previewView);
-        SurfaceHolder previewHolder = preview.getHolder();
+        preview = (SurfaceView) findViewById(R.id.previewView);
+        previewHolder = preview.getHolder();
         previewHolder.addCallback(DetectorService.surfaceHolderCallback);
     }
 
@@ -179,10 +173,10 @@ public class MainActivity extends AppCompatActivity {
     protected void onDestroy() {
         super.onDestroy();
         DetectorService.legacyCamera.release();
+        handlerThread.quit();
     }
 
     private class RendererRetriever implements Runnable {
-
 
         @Override
         public void run() {
@@ -199,6 +193,7 @@ public class MainActivity extends AppCompatActivity {
             assert renderer != null;
 
             // Load the appropriate OpenCL kernel based on GPU model
+            String kernel;
             switch (renderer) {
                 case "Mali-T880":
                 case "Mali-T720":
@@ -211,6 +206,11 @@ public class MainActivity extends AppCompatActivity {
 
             // Load the appropriate OpenCL library based on the GPU vendor
             loadGLLibrary();
+
+            // Create the intent for the main service and bundle the string containing the OpenCL kernel
+            Intent detectorIntent = new Intent(MainActivity.this, DetectorService.class);
+            detectorIntent.putExtra("Kernel", kernel);
+            MainActivity.this.startService(detectorIntent);
         }
     }
 }
