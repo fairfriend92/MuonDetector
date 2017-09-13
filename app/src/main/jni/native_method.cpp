@@ -34,7 +34,7 @@ extern "C" jlong Java_com_example_muondetector_DetectorService_initializeOpenCL 
 
     /*
      * Query the device to find various information. These are merely indicative since we must account for the
-     * complexity of the Kernel. For more information look at clGetKernelWorkGroupInfo in the computeLuminescence method.
+     * complexity of the Kernel. For more information look at clGetKernelWorkGroupInfo in the computeluminance method.
      */
 
     size_t maxWorkItems[3];
@@ -69,7 +69,7 @@ extern "C" jlong Java_com_example_muondetector_DetectorService_initializeOpenCL 
     clGetDeviceInfo(obj->device, CL_DEVICE_ADDRESS_BITS, sizeof(cl_uint), &addressBits, NULL);
     LOGD("Device info: Device address bits: %d", addressBits);
 
-    obj->kernel = clCreateKernel(obj->program, "compute_luminescence", &obj->errorNumber);
+    obj->kernel = clCreateKernel(obj->program, "compute_luminance", &obj->errorNumber);
     if (!checkSuccess(obj->errorNumber))
     {
         cleanUpOpenCL(obj->context, obj->commandQueue, obj->program, obj->kernel, obj->memoryObjects, obj->numberOfMemoryObjects);
@@ -120,7 +120,7 @@ extern "C" jlong Java_com_example_muondetector_DetectorService_initializeOpenCL 
     return (long) obj;
 }
 
-extern "C" jfloat Java_com_example_muondetector_DetectorService_computeLuminescence(
+extern "C" jfloat Java_com_example_muondetector_DetectorService_computeluminance(
         JNIEnv *env, jobject thiz, jlong jOpenCLObject, jintArray jPixels, jint jPreviewWidth, jint jPreviewHeight,
         jint inSampleSize) {
 

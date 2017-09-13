@@ -9,7 +9,7 @@ float luminescence(int pixel) {
 }
 
 __kernel __attribute__((vec_type_hint(int4)))
-void compute_luminescence(__global int* restrict pixels, __global int* restrict result)
+void compute_luminance(__global int* restrict pixels, __global int* restrict result)
 {
   int4 pixelsVec = vload4(get_local_id(0), pixels);    
   float maxLuminescence = 0.0f;
