@@ -55,8 +55,8 @@ public class DetectorService extends Service {
     private static final int PREVIEW_WIDTH = 640;
     private static final int PREVIEW_HEIGHT = 480;
     private static final int IN_SAMPLE_SIZE = 1;
-    private static final int FRAME_RATE = 16;
-    private static final int FRAME_RATE_MIN = 16;
+    private static final int FRAME_RATE = 24;
+    private static final int FRAME_RATE_MIN = 24;
     private static final int NUM_OF_SAMPLES = FRAME_RATE_MIN * 240;
     private static final long NULL_VALUE = 0;
 
@@ -192,7 +192,7 @@ public class DetectorService extends Service {
                 maxLuminance = luminance > maxLuminance ? luminance : maxLuminance;
             }
 
-            if (maxLuminance > meanluminance + 3 * standardDeviation) {
+            if (maxLuminance > meanluminance + 5 * standardDeviation) {
                 try {
                     jpegCreatorExecutor.execute(new jpegCreator(yuvData));
                 } catch (RejectedExecutionException e) {
@@ -271,7 +271,7 @@ public class DetectorService extends Service {
             bitmap.getPixels(pixels, 0, scaledWidth, 0, 0, scaledWidth, scaledHeight);
 
             if (samplesTaken <= NUM_OF_SAMPLES) {
-                double sampledLumi = computeluminance(openCLObject, pixels, PREVIEW_WIDTH, PREVIEW_HEIGHT, IN_SAMPLE_SIZE);
+                double sampledLumi = computeluminance(openCLObject, pixels);
                 meanluminance += sampledLumi;
                 meanSquaredLumi += sampledLumi * sampledLumi;
                 maxLumi = maxLumi > sampledLumi ? maxLumi : sampledLumi;
@@ -282,12 +282,15 @@ public class DetectorService extends Service {
                 standardDeviation = Math.sqrt((meanSquaredLumi - meanluminance * meanluminance) * NUM_OF_SAMPLES / (NUM_OF_SAMPLES - 1));
                 samplesTaken++;
             }
-            else if (computeluminance(openCLObject, pixels, PREVIEW_WIDTH, PREVIEW_HEIGHT, IN_SAMPLE_SIZE) >= meanluminance + 3 * standardDeviation) {
-                try {
-                    jpegCreatorExecutor.execute(new jpegCreator(yuvData));
-                } catch (RejectedExecutionException e) {
-                    String stackTrace = Log.getStackTraceString(e);
-                    Log.e("DetectorService", stackTrace);
+            else {
+                float test = computeluminance(openCLObject, pixels);
+                if (test >= meanluminance + 5 * standardDeviation) {
+                    try {
+                        jpegCreatorExecutor.execute(new jpegCreator(yuvData));
+                    } catch (RejectedExecutionException e) {
+                        String stackTrace = Log.getStackTraceString(e);
+                        Log.e("DetectorService", stackTrace);
+                    }
                 }
             }
             /* [End of if] */
@@ -322,6 +325,7 @@ public class DetectorService extends Service {
                 FileOutputStream fileOutputStream = new FileOutputStream(imageFile);
 
                 // Just like in the ImageConverter class we need first to convert the image from yuv to jpeg...
+                /*
                 YuvImage yuvImage = new YuvImage(yuvData, ImageFormat.NV21,PREVIEW_WIDTH, PREVIEW_HEIGHT, null);
                 ByteArrayOutputStream byteArrayOS = new ByteArrayOutputStream();
                 yuvImage.compressToJpeg(new Rect(0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT), 100, byteArrayOS);
@@ -330,6 +334,9 @@ public class DetectorService extends Service {
                 // ...then, as before, create a bitmap from the data
                 BitmapFactory.Options highResOptions = new BitmapFactory.Options();
                 Bitmap highResBitmap = BitmapFactory.decodeByteArray(data, 0, data.length, highResOptions);
+                */
+
+                Bitmap highResBitmap = Bitmap.createBitmap(retrieveLuminance(openCLObject), PREVIEW_WIDTH, PREVIEW_HEIGHT, Bitmap.Config.ARGB_8888);
 
                 // Store the bitmap in the file
                 highResBitmap.compress(Bitmap.CompressFormat.JPEG, 100, fileOutputStream);
@@ -355,7 +362,7 @@ public class DetectorService extends Service {
         @Override
         public void onPreviewFrame(byte[] data, Camera camera) {
             try {
-                imageConverterExecutor.execute(new ImageConverter(data));
+                imageConverterExecutor.execute(new ImageConverter(data.clone()));
             } catch (RejectedExecutionException e) {
                 String stackTrace = Log.getStackTraceString(e);
                 Log.e("DetectorService", stackTrace);
@@ -377,7 +384,7 @@ public class DetectorService extends Service {
                 frame = 0;
             }
 
-            // Swap the buffers that store the preview frame
+            // Swap the buffers that store the preview frame // TODO: Perhaps unnecessary? Maybe it would be better not to clone the data but to append a new byte[] everytime
             switch (bufferUsed) {
                 case "front":
                     legacyCamera.addCallbackBuffer(backBuffer);
@@ -574,7 +581,7 @@ public class DetectorService extends Service {
              }
          });
 
-        return START_STICKY;
+        return START_NOT_STICKY;
     }
 
     @Override
@@ -611,6 +618,7 @@ public class DetectorService extends Service {
     }
 
     public native long initializeOpenCL(String kernel, int previewWidth, int previewHeight, int inSampleSize);
-    public native float computeluminance(long openCLObject, int[] pixels, int previewWidth, int previewHeight, int inSampleSize);
+    public native float computeluminance(long openCLObject, int[] pixels);
+    public native int[] retrieveLuminance(long openCLObject);
     public native void closeOpenCL(long openCLObject);
 }
