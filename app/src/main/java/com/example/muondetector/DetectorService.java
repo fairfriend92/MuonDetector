@@ -55,8 +55,8 @@ public class DetectorService extends Service {
     private static final int PREVIEW_WIDTH = 640;
     private static final int PREVIEW_HEIGHT = 480;
     private static final int IN_SAMPLE_SIZE = 1;
-    private static final int FRAME_RATE = 24;
-    private static final int FRAME_RATE_MIN = 24;
+    private static final int FRAME_RATE = 16;
+    private static final int FRAME_RATE_MIN = 16;
     private static final int NUM_OF_SAMPLES = FRAME_RATE_MIN * 240;
     private static final long NULL_VALUE = 0;
 
@@ -150,10 +150,10 @@ public class DetectorService extends Service {
                 // the CPU to handle the processing
                 if (capacity > size / 3 && !bufferUnderPressure || capacity > size) {
                     bufferUnderPressure = false;
-                    GPUkernelSchedulerExec.execute(new GPUscheduler(lowResBitmap, yuvData));
+                    GPUkernelSchedulerExec.execute(new GPUscheduler(lowResBitmap));
                 } else if (capacity <= size / 3 && meanluminance != 0 || bufferUnderPressure) { // Can't launch the CPU thread it the maximum luminance has not be sampled yet
                     Log.e("DetectorService", "Buffer capacity is < 1/4th of size: Use software computation");
-                    luminanceCalculatorExec.execute(new luminanceCalculator(lowResBitmap, yuvData));
+                    luminanceCalculatorExec.execute(new luminanceCalculator(lowResBitmap));
                     bufferUnderPressure = true;
                 }
             } catch (RejectedExecutionException e) {
@@ -171,11 +171,9 @@ public class DetectorService extends Service {
 
     private class luminanceCalculator implements Runnable {
         private Bitmap bitmap;
-        private byte[] yuvData;
 
-        luminanceCalculator(Bitmap bitmap, byte[] yuvData) {
+        luminanceCalculator(Bitmap bitmap) {
             this.bitmap = bitmap;
-            this.yuvData = yuvData;
         }
 
         @Override
@@ -193,8 +191,9 @@ public class DetectorService extends Service {
             }
 
             if (maxLuminance > meanluminance + 5 * standardDeviation) {
+                Bitmap highResBitmap = Bitmap.createBitmap(retrieveLuminance(openCLObject), PREVIEW_WIDTH, PREVIEW_HEIGHT, Bitmap.Config.ARGB_8888);
                 try {
-                    jpegCreatorExecutor.execute(new jpegCreator(yuvData));
+                    jpegCreatorExecutor.execute(new jpegCreator(maxLuminance, highResBitmap));
                 } catch (RejectedExecutionException e) {
                     String stackTrace = Log.getStackTraceString(e);
                     Log.e("DetectorService", stackTrace);
@@ -238,7 +237,7 @@ public class DetectorService extends Service {
             K = ((N*m2*m2 - 4*m2*m*sumX + 6*m2*m2*sumX2 - 4*m*sumX3 + sumX4) / ((sumX2 - N*m2) * (sumX2 - N*m2)) - 3);
             Log.d("DetectorService", "Kurtosis " + K);
             if (K >= 0) {
-                jpegCreatorExecutor.execute(new jpegCreator(yuvData));
+                //jpegCreatorExecutor.execute(new jpegCreator(yuvData));
             }
 
         }
@@ -255,12 +254,11 @@ public class DetectorService extends Service {
 
     private class GPUscheduler implements Runnable {
         private Bitmap bitmap;
-        private byte[] yuvData;
 
-        GPUscheduler(Bitmap bitmap, byte[] yuvData)
+
+        GPUscheduler(Bitmap bitmap)
         {
             this.bitmap = bitmap;
-            this.yuvData = yuvData;
         }
 
         @Override
@@ -283,10 +281,11 @@ public class DetectorService extends Service {
                 samplesTaken++;
             }
             else {
-                float test = computeluminance(openCLObject, pixels);
-                if (test >= meanluminance + 5 * standardDeviation) {
+                float luminance = computeluminance(openCLObject, pixels);
+                if (luminance >= meanluminance + 5 * standardDeviation) {
+                    Bitmap highResBitmap = Bitmap.createBitmap(retrieveLuminance(openCLObject), PREVIEW_WIDTH, PREVIEW_HEIGHT, Bitmap.Config.ARGB_8888);
                     try {
-                        jpegCreatorExecutor.execute(new jpegCreator(yuvData));
+                        jpegCreatorExecutor.execute(new jpegCreator(luminance, highResBitmap));
                     } catch (RejectedExecutionException e) {
                         String stackTrace = Log.getStackTraceString(e);
                         Log.e("DetectorService", stackTrace);
@@ -304,10 +303,12 @@ public class DetectorService extends Service {
      */
 
     private class jpegCreator implements Runnable {
-        private byte[] yuvData;
+        private float luminance;
+        private Bitmap highResBitmap;
 
-        jpegCreator(byte[] yuvData) {
-            this.yuvData = yuvData;
+        jpegCreator(float luminance, Bitmap bitmap) {
+            this.luminance = luminance;
+            highResBitmap = bitmap;
         }
 
         @Override
@@ -321,7 +322,7 @@ public class DetectorService extends Service {
                 }
 
                 // Create the file that will store the image
-                File imageFile = createImageFile();
+                File imageFile = createImageFile(luminance);
                 FileOutputStream fileOutputStream = new FileOutputStream(imageFile);
 
                 // Just like in the ImageConverter class we need first to convert the image from yuv to jpeg...
@@ -336,7 +337,6 @@ public class DetectorService extends Service {
                 Bitmap highResBitmap = BitmapFactory.decodeByteArray(data, 0, data.length, highResOptions);
                 */
 
-                Bitmap highResBitmap = Bitmap.createBitmap(retrieveLuminance(openCLObject), PREVIEW_WIDTH, PREVIEW_HEIGHT, Bitmap.Config.ARGB_8888);
 
                 // Store the bitmap in the file
                 highResBitmap.compress(Bitmap.CompressFormat.JPEG, 100, fileOutputStream);
@@ -483,9 +483,9 @@ public class DetectorService extends Service {
 
     String currentPhotoPath;
 
-    private File createImageFile() throws IOException {
+    private File createImageFile(float luminance) throws IOException {
         // Create an image file name
-        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ITALY).format(new Date());
+        String timeStamp = new SimpleDateFormat(luminance / 255.0f + "_yyyyMMdd_HHmmss", Locale.ITALY).format(new Date());
         String imageFileName = "JPEG_" + timeStamp + "_";
         File storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
         File image = File.createTempFile(

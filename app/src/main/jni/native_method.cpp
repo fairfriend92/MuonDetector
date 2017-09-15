@@ -106,6 +106,9 @@ extern "C" jlong Java_com_example_muondetector_DetectorService_initializeOpenCL 
         LOGE("Failed to create OpenCL buffer");
     }
 
+    // Allocate the native array
+    int *luminanceBuffer = new int[pixelCount];
+
     // Initialize the buffer holding the result of the computation to the default value
     bool mapMemoryObjectsSuccess = true;
     obj->result = (cl_int *)clEnqueueMapBuffer(obj->commandQueue, obj->memoryObjects[1], CL_TRUE, CL_MAP_WRITE, 0,
@@ -271,9 +274,7 @@ extern "C" jfloat Java_com_example_muondetector_DetectorService_computeluminance
 
     /* [Kernel execution] */
 
-    /*
-     * Map the result buffer so that the flag triggerActivated can be read and passed to the Java side
-     */
+    /* [Output buffers mapping] */
 
     obj->result = (cl_int *)clEnqueueMapBuffer(obj->commandQueue, obj->memoryObjects[1], CL_TRUE, CL_MAP_READ | CL_MAP_WRITE, 0,
                                                 sizeof(cl_int), 0, NULL, NULL, &obj->errorNumber);
@@ -286,6 +287,8 @@ extern "C" jfloat Java_com_example_muondetector_DetectorService_computeluminance
     }
 
     float resultFloat = (float)(obj->result[0]) / 1048576.0f;
+
+    // Result must be reset if we want the luminance comparison to be carried only among the pixels of the current image
     obj->result[0] = 0;
 
     if (!checkSuccess(clEnqueueUnmapMemObject(obj->commandQueue, obj->memoryObjects[1], obj->result, 0, NULL, NULL)))
@@ -293,6 +296,8 @@ extern "C" jfloat Java_com_example_muondetector_DetectorService_computeluminance
         cleanUpOpenCL(obj->context, obj->commandQueue, obj->program, obj->kernel, obj->memoryObjects, obj->numberOfMemoryObjects);
         LOGE("Unmap memory objects failed");
     }
+
+    /* [Output buffers mapping] */
 
     // If an error occurred return an empty byte array
     if (openCLFailed)
@@ -307,12 +312,9 @@ extern "C" jintArray Java_com_example_muondetector_DetectorService_retrieveLumin
     struct OpenCLObject *obj;
     obj = (struct OpenCLObject *)jOpenCLObject;
 
-    int luminanceMap[pixelCount];
-
     bool mapMemoryObjectsSuccess = true;
-
     obj->luminance = (cl_int *)clEnqueueMapBuffer(obj->commandQueue, obj->memoryObjects[2], CL_TRUE, CL_MAP_READ, 0,
-                                               previewBufferSize, 0, NULL, NULL, &obj->errorNumber);
+                                                  previewBufferSize, 0, NULL, NULL, &obj->errorNumber);
     mapMemoryObjectsSuccess &= checkSuccess(obj->errorNumber);
 
     if (!mapMemoryObjectsSuccess)
@@ -321,16 +323,11 @@ extern "C" jintArray Java_com_example_muondetector_DetectorService_retrieveLumin
         LOGE("Failed to map buffer");
     }
 
-    /*
-    for (int i = 0; i < pixelCount; i++) {
-        luminanceMap[i] = (jint)obj->luminance[0];
-    }
-    */
-
     // Create the array where to store the output
-    jintArray jLuminanceMap = env->NewIntArray(pixelCount);
+    jintArray jLuminanceBuffer = env->NewIntArray(pixelCount);
+
     // Copy the content in the buffer to the java array, using the pointer created by the OpenCL implementation
-    env->SetIntArrayRegion(jLuminanceMap, 0, pixelCount, reinterpret_cast<jint*>(obj->luminance));
+    env->SetIntArrayRegion(jLuminanceBuffer, 0, pixelCount, reinterpret_cast<jint*>(obj->luminance));
 
     if (!checkSuccess(clEnqueueUnmapMemObject(obj->commandQueue, obj->memoryObjects[2], obj->luminance, 0, NULL, NULL)))
     {
@@ -338,7 +335,7 @@ extern "C" jintArray Java_com_example_muondetector_DetectorService_retrieveLumin
         LOGE("Unmap memory objects failed");
     }
 
-    return jLuminanceMap;
+    return jLuminanceBuffer;
 }
 
 extern "C" void Java_com_example_muondetector_DetectorService_closeOpenCL(
