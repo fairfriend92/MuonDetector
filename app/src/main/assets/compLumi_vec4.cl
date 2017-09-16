@@ -15,6 +15,18 @@ float luminescence(int pixel) {
  return (0.2126f * linearColors.x + 0.7152f * linearColors.y + 0.0722f * linearColors.z) * 255.0f; // Luminance scaled up to 255
 }
 
+void savePixelLumi(float scaledLumi,__global int* restrict luminance) {
+  int globalId = get_global_id(0);
+  
+  if (scaledLumi < 85) {
+    luminance[globalId * 4] = (ALPHA & 0xff) << 24 | ((int)(scaledLumi) & 0xff) << 16;
+  } else if (scaledLumi < 170) {
+    luminance[globalId * 4] = (ALPHA & 0xff) << 24 | (255 & 0xff) << 16 | ((int)(scaledLumi) & 0xff) << 8;
+  } else {
+    luminance[globalId * 4] = (ALPHA & 0xff) << 24 | (255 & 0xff) << 16 | (255 & 0xff) << 8 | ((int)(scaledLumi) & 0xff);
+  }  
+}
+
 __kernel __attribute__((vec_type_hint(int4)))
 void compute_luminance(__global int* restrict pixels, __global int* restrict result, __global int* restrict luminance,
 		       __global float* restrict lumiThreshold)
@@ -27,19 +39,19 @@ void compute_luminance(__global int* restrict pixels, __global int* restrict res
   
   float lumiX = luminescence(pixelsVec.x);
   float scaledLumi = lumiX < lumiThreshold[0] ? lumiX * COEFF_BELOW_THRESHOLD : (lumiX - lumiThreshold[0]) * COEFF_ABOVE_THRESHOLD + CUTOFF;
-  luminance[globalId * 4] = (ALPHA & 0xff) << 24 | ((int)(scaledLumi) & 0xff) << 16;
-
+  savePixelLumi(scaledLumi, luminance);
+  
   float lumiY = luminescence(pixelsVec.y);
   scaledLumi = lumiY < lumiThreshold[0] ? lumiY * COEFF_BELOW_THRESHOLD : (lumiY - lumiThreshold[0]) * COEFF_ABOVE_THRESHOLD + CUTOFF;
-  luminance[globalId * 4 + 1] = (ALPHA & 0xff) << 24 | ((int)(scaledLumi) & 0xff) << 16;
-
+  savePixelLumi(scaledLumi, luminance);
+  
   float lumiZ = luminescence(pixelsVec.z);
   scaledLumi = lumiZ < lumiThreshold[0] ? lumiZ * COEFF_BELOW_THRESHOLD : (lumiZ - lumiThreshold[0]) * COEFF_ABOVE_THRESHOLD + CUTOFF;
-  luminance[globalId * 4 + 2] = (ALPHA & 0xff) << 24 | ((int)(scaledLumi) & 0xff) << 16;
-
+  savePixelLumi(scaledLumi, luminance);
+ 
   float lumiW = luminescence(pixelsVec.w);
   scaledLumi = lumiW < lumiThreshold[0] ? lumiW * COEFF_BELOW_THRESHOLD : (lumiW - lumiThreshold[0]) * COEFF_ABOVE_THRESHOLD + CUTOFF;
-  luminance[globalId * 4 + 3] = (ALPHA & 0xff) << 24 | ((int)(scaledLumi) & 0xff) << 16;
+  savePixelLumi(scaledLumi, luminance);
 
   /* Comput the maximum luminance among the values for the current picture */ 
 

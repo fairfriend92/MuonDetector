@@ -52,11 +52,11 @@ public class DetectorService extends Service {
 
     private static final int NOTIFICATION_ID = 0;
     private static final int SERVICE_NOTIFICATION_ID = 1;
-    private static final int PREVIEW_WIDTH = 640;
-    private static final int PREVIEW_HEIGHT = 480;
+    private static final int PREVIEW_WIDTH = 1280;
+    private static final int PREVIEW_HEIGHT = 720;
     private static final int IN_SAMPLE_SIZE = 1;
-    private static final int FRAME_RATE = 24;
-    private static final int FRAME_RATE_MIN = 24;
+    private static final int FRAME_RATE = 16;
+    private static final int FRAME_RATE_MIN = 16;
     private static final int NUM_OF_SAMPLES = FRAME_RATE_MIN * 240;
     private static final long NULL_VALUE = 0;
 
