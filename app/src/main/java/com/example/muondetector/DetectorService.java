@@ -55,8 +55,8 @@ public class DetectorService extends Service {
     private static final int PREVIEW_WIDTH = 640;
     private static final int PREVIEW_HEIGHT = 480;
     private static final int IN_SAMPLE_SIZE = 1;
-    private static final int FRAME_RATE = 16;
-    private static final int FRAME_RATE_MIN = 16;
+    private static final int FRAME_RATE = 24;
+    private static final int FRAME_RATE_MIN = 24;
     private static final int NUM_OF_SAMPLES = FRAME_RATE_MIN * 240;
     private static final long NULL_VALUE = 0;
 
@@ -269,7 +269,7 @@ public class DetectorService extends Service {
             bitmap.getPixels(pixels, 0, scaledWidth, 0, 0, scaledWidth, scaledHeight);
 
             if (samplesTaken <= NUM_OF_SAMPLES) {
-                double sampledLumi = computeluminance(openCLObject, pixels);
+                double sampledLumi = computeluminance(openCLObject, pixels, (float)(meanluminance + 5 * standardDeviation));
                 meanluminance += sampledLumi;
                 meanSquaredLumi += sampledLumi * sampledLumi;
                 maxLumi = maxLumi > sampledLumi ? maxLumi : sampledLumi;
@@ -281,7 +281,7 @@ public class DetectorService extends Service {
                 samplesTaken++;
             }
             else {
-                float luminance = computeluminance(openCLObject, pixels);
+                float luminance = computeluminance(openCLObject, pixels, (float)(meanluminance + 5 * standardDeviation));
                 if (luminance >= meanluminance + 5 * standardDeviation) {
                     Bitmap highResBitmap = Bitmap.createBitmap(retrieveLuminance(openCLObject), PREVIEW_WIDTH, PREVIEW_HEIGHT, Bitmap.Config.ARGB_8888);
                     try {
@@ -485,7 +485,7 @@ public class DetectorService extends Service {
 
     private File createImageFile(float luminance) throws IOException {
         // Create an image file name
-        String timeStamp = new SimpleDateFormat(luminance / 255.0f + "_yyyyMMdd_HHmmss", Locale.ITALY).format(new Date());
+        String timeStamp = new SimpleDateFormat((int)luminance + "_yyyyMMdd_HHmmss", Locale.ITALY).format(new Date());
         String imageFileName = "JPEG_" + timeStamp + "_";
         File storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
         File image = File.createTempFile(
@@ -618,7 +618,7 @@ public class DetectorService extends Service {
     }
 
     public native long initializeOpenCL(String kernel, int previewWidth, int previewHeight, int inSampleSize);
-    public native float computeluminance(long openCLObject, int[] pixels);
+    public native float computeluminance(long openCLObject, int[] pixels, float lumiThreshold);
     public native int[] retrieveLuminance(long openCLObject);
     public native void closeOpenCL(long openCLObject);
 }

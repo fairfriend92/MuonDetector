@@ -85,7 +85,7 @@ extern "C" jlong Java_com_example_muondetector_DetectorService_initializeOpenCL 
     env->ReleaseStringUTFChars(jKernel, kernelString);
 
     bool createMemoryObjectsSuccess = true;
-    obj->numberOfMemoryObjects= 3;
+    obj->numberOfMemoryObjects= 4;
 
     // Ask the OpenCL implementation to allocate buffers to pass data to and from the kernel
     obj->memoryObjects[0] = clCreateBuffer(obj->context, CL_MEM_READ_ONLY| CL_MEM_ALLOC_HOST_PTR,
@@ -99,6 +99,11 @@ extern "C" jlong Java_com_example_muondetector_DetectorService_initializeOpenCL 
     obj->memoryObjects[2] = clCreateBuffer(obj->context, CL_MEM_WRITE_ONLY| CL_MEM_ALLOC_HOST_PTR,
                                            previewBufferSize, NULL, &obj->errorNumber);
     createMemoryObjectsSuccess &= checkSuccess(obj->errorNumber);
+
+    obj->memoryObjects[3] = clCreateBuffer(obj->context, CL_MEM_READ_ONLY| CL_MEM_ALLOC_HOST_PTR,
+                                           sizeof(cl_float), NULL, &obj->errorNumber);
+    createMemoryObjectsSuccess &= checkSuccess(obj->errorNumber);
+
 
     if (!createMemoryObjectsSuccess)
     {
@@ -133,7 +138,7 @@ extern "C" jlong Java_com_example_muondetector_DetectorService_initializeOpenCL 
 }
 
 extern "C" jfloat Java_com_example_muondetector_DetectorService_computeluminance(
-        JNIEnv *env, jobject thiz, jlong jOpenCLObject, jintArray jPixels) {
+        JNIEnv *env, jobject thiz, jlong jOpenCLObject, jintArray jPixels, jfloat jLumiThreshold) {
 
     struct OpenCLObject *obj;
     obj = (struct OpenCLObject *)jOpenCLObject;
@@ -154,6 +159,10 @@ extern "C" jfloat Java_com_example_muondetector_DetectorService_computeluminance
                                                previewBufferSize, 0, NULL, NULL, &obj->errorNumber);
     mapMemoryObjectsSuccess &= checkSuccess(obj->errorNumber);
 
+    obj->lumiThreshold = (cl_float *)clEnqueueMapBuffer(obj->commandQueue, obj->memoryObjects[3], CL_TRUE, CL_MAP_WRITE, 0,
+                                                        sizeof(cl_float), 0, NULL, NULL, &obj->errorNumber);
+    mapMemoryObjectsSuccess &= checkSuccess(obj->errorNumber);
+
     // Catch eventual errors
     if (!mapMemoryObjectsSuccess)
     {
@@ -167,8 +176,16 @@ extern "C" jfloat Java_com_example_muondetector_DetectorService_computeluminance
         obj->pixels[index] = (cl_int)pixels[index];
     }
 
+    obj->lumiThreshold[0] = (cl_float)jLumiThreshold;
+
     // Un-map the buffer
     if (!checkSuccess(clEnqueueUnmapMemObject(obj->commandQueue, obj->memoryObjects[0], obj->pixels, 0, NULL, NULL)))
+    {
+        cleanUpOpenCL(obj->context, obj->commandQueue, obj->program, obj->kernel, obj->memoryObjects, obj->numberOfMemoryObjects);
+        LOGE("Unmap memory objects failed");
+    }
+
+    if (!checkSuccess(clEnqueueUnmapMemObject(obj->commandQueue, obj->memoryObjects[3], obj->lumiThreshold, 0, NULL, NULL)))
     {
         cleanUpOpenCL(obj->context, obj->commandQueue, obj->program, obj->kernel, obj->memoryObjects, obj->numberOfMemoryObjects);
         LOGE("Unmap memory objects failed");
@@ -186,6 +203,7 @@ extern "C" jfloat Java_com_example_muondetector_DetectorService_computeluminance
     setKernelArgumentSuccess &= checkSuccess(clSetKernelArg(obj->kernel, 0, sizeof(cl_mem), &obj->memoryObjects[0]));
     setKernelArgumentSuccess &= checkSuccess(clSetKernelArg(obj->kernel, 1, sizeof(cl_mem), &obj->memoryObjects[1]));
     setKernelArgumentSuccess &= checkSuccess(clSetKernelArg(obj->kernel, 2, sizeof(cl_mem), &obj->memoryObjects[2]));
+    setKernelArgumentSuccess &= checkSuccess(clSetKernelArg(obj->kernel, 3, sizeof(cl_mem), &obj->memoryObjects[3]));
 
     // Catch eventual errors
     if (!setKernelArgumentSuccess)
