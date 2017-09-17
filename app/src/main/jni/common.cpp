@@ -43,7 +43,7 @@ bool printProfilingInfo(cl_event event)
     return true;
 }
 
-bool cleanUpOpenCL(cl_context context, cl_command_queue commandQueue, cl_program program, cl_kernel kernel, cl_mem* memoryObjects, int numberOfMemoryObjects)
+bool cleanUpOpenCL(cl_context context, cl_command_queue commandQueue, cl_program program, cl_kernel* kernelArray, int numOfKernels, cl_mem* memoryObjects, int numberOfMemoryObjects)
 {
     bool returnValue = true;
 
@@ -65,12 +65,13 @@ bool cleanUpOpenCL(cl_context context, cl_command_queue commandQueue, cl_program
         }
     }
 
-    if (kernel != 0)
+    for (int i = 0; i < numOfKernels; i++)
     {
-        if (!checkSuccess(clReleaseKernel(kernel)))
-        {
-            LOGE("Releasing the OpenCL kernel failed");
-            returnValue = false;
+        if (kernelArray[i] != 0) {
+            if (!checkSuccess(clReleaseKernel(kernelArray[i]))) {
+                LOGE("Releasing the OpenCL kernel failed");
+                returnValue = false;
+            }
         }
     }
 

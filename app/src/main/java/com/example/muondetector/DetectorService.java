@@ -4,11 +4,6 @@ import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Intent;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.graphics.Color;
-import android.graphics.ImageFormat;
-import android.graphics.Rect;
-import android.graphics.YuvImage;
 import android.hardware.Camera;
 import android.os.Environment;
 import android.os.Handler;
@@ -25,7 +20,6 @@ import android.support.v4.app.NotificationCompat;
 import android.util.Log;
 import android.view.SurfaceHolder;
 
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -36,7 +30,6 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -52,12 +45,7 @@ public class DetectorService extends Service {
 
     private static final int NOTIFICATION_ID = 0;
     private static final int SERVICE_NOTIFICATION_ID = 1;
-    private static final int PREVIEW_WIDTH = 1280;
-    private static final int PREVIEW_HEIGHT = 720;
-    private static final int IN_SAMPLE_SIZE = 1;
-    private static final int FRAME_RATE = 16;
-    private static final int FRAME_RATE_MIN = 16;
-    private static final int NUM_OF_SAMPLES = FRAME_RATE_MIN * 240;
+    private static final int NUM_OF_SAMPLES = Constants.FRAME_RATE_MIN * 8;
     private static final long NULL_VALUE = 0;
 
     private static boolean shutdown = false;
@@ -74,35 +62,24 @@ public class DetectorService extends Service {
     private BlockingQueue<Runnable> luminanceCalculatorQueue = new ArrayBlockingQueue<>(32);
     private BlockingQueue<Runnable> GPUschedulerQueue = new ArrayBlockingQueue<>(32);
     private BlockingQueue<Runnable> imageConverterQueue = new ArrayBlockingQueue<>(32);
-    private BlockingQueue<Runnable> kurtosisCalculatorQueue = new ArrayBlockingQueue<>(32);
 
     // Executors and HandlerThread
     private ExecutorService captureThreadExecutor = Executors.newSingleThreadExecutor();
     private ExecutorService imageConverterExecutor =
-            new ThreadPoolExecutor(1, 8, 1, TimeUnit.SECONDS, imageConverterQueue, rejectedExecutionHandler);
+            new ThreadPoolExecutor(1, 1, 8, TimeUnit.SECONDS, imageConverterQueue, rejectedExecutionHandler);
     private ThreadPoolExecutor luminanceCalculatorExec =
-            new ThreadPoolExecutor(1, 8, 1, TimeUnit.SECONDS, luminanceCalculatorQueue, rejectedExecutionHandler);
+            new ThreadPoolExecutor(1, 1, 1, TimeUnit.SECONDS, luminanceCalculatorQueue, rejectedExecutionHandler);
     private ThreadPoolExecutor GPUkernelSchedulerExec =
             new ThreadPoolExecutor(1, 1, 1, TimeUnit.SECONDS, GPUschedulerQueue, rejectedExecutionHandler);
-    private ExecutorService kurtosisCalculatorExecutor =
-            new ThreadPoolExecutor(1, 4, 1, TimeUnit.SECONDS, kurtosisCalculatorQueue, rejectedExecutionHandler);
     private ExecutorService jpegCreatorExecutor = Executors.newSingleThreadExecutor();
     private HandlerThread handlerThread;
 
-    /* Objects pertaining the renderscript that converts the preview yuv image to bitmap */
-
-    boolean renderScriptInUse = true;
-    private ScriptIntrinsicYuvToRGB yuvToRgbIntrinsic;
-    private Allocation allocatioIn, allocationOut;
-    private Bitmap previewBitmap;
 
     /* Miscellanea */
 
     private NotificationCompat.Builder notificationBuilder;
     private boolean notificationShowed = false;
     private long openCLObject = 0;
-    private volatile boolean bufferUnderPressure = false; // Flag that indicates that the buffer of the GPUscheduler is almost full
-    private int previewImageSize = 0; // Size in buffer of the preview image if preview format is NV21 (default format)
     private double meanluminance = 0, meanSquaredLumi = 0, standardDeviation = 0, constantValue = 0, maxMeanLumi = 0, maxStandardDeviation = 0;
 
     /*
@@ -120,126 +97,32 @@ public class DetectorService extends Service {
 
         @Override
         public void run () {
-            Bitmap lowResBitmap;
-            byte[] data;
+            // Initialization of the rendescript used to convert the preview frame from yuv to jpeg
+            RenderScript renderScript = RenderScript.create(DetectorService.this);
+            ScriptIntrinsicYuvToRGB yuvToRgbIntrinsic = ScriptIntrinsicYuvToRGB.create(renderScript, Element.U8_4(renderScript));
 
-            // If possible use hardware accelaration through renderscript to convert the image
-            if (!renderScriptInUse) { // TODO: Phase out software alternative?
-                // Convert the YUV preview frame to jpeg
-                YuvImage yuvImage = new YuvImage(yuvData, ImageFormat.NV21,PREVIEW_WIDTH, PREVIEW_HEIGHT, null);
-                ByteArrayOutputStream byteArrayOS = new ByteArrayOutputStream();
-                yuvImage.compressToJpeg(new Rect(0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT), 100, byteArrayOS);
-                data = byteArrayOS.toByteArray();
+            // Allocate the buffers for the renderscript
+            Bitmap previewBitmap = Bitmap.createBitmap(Constants.PREVIEW_WIDTH, Constants.PREVIEW_HEIGHT, Bitmap.Config.ARGB_8888);
+            Allocation allocatioIn = Allocation.createSized(renderScript, Element.U8(renderScript), Constants.PREVIEW_IMAGE_SIZE);
+            Allocation allocationOut = Allocation.createFromBitmap(renderScript, previewBitmap);
 
-                // Crate low res bitmap from jpeg yuvData
-                BitmapFactory.Options lowResOptions = new BitmapFactory.Options();
-                lowResOptions.inSampleSize = IN_SAMPLE_SIZE;
-                lowResBitmap = BitmapFactory.decodeByteArray(data, 0, data.length, lowResOptions);
-            } else {
-                allocatioIn.copyFrom(yuvData);
-                yuvToRgbIntrinsic.forEach(allocationOut);
-                allocationOut.copyTo(previewBitmap);
-                lowResBitmap = Bitmap.createScaledBitmap(previewBitmap, PREVIEW_WIDTH / IN_SAMPLE_SIZE, PREVIEW_HEIGHT / IN_SAMPLE_SIZE, false);
-            }
+            // Run the script and read the buffers
+            yuvToRgbIntrinsic.setInput(allocatioIn);
+            allocatioIn.copyFrom(yuvData);
+            yuvToRgbIntrinsic.forEach(allocationOut);
+            allocationOut.copyTo(previewBitmap);
 
-            // Put the bitmap and the yuvData in the buffer of the separate thread computing the luminiscence
+            // Create low res version of the bitmap
+            Bitmap lowResBitmap = Bitmap.createScaledBitmap(previewBitmap, Constants.SCALED_WIDTH, Constants.SCALED_HEIGHT, false);
+            // TODO: Take only a square in the middle of the picture to exclude borders.
+
+            // Put the lowResBitamp and the yuvData in the buffer of the separate thread computing the luminiscence
             try {
-                int capacity = GPUschedulerQueue.remainingCapacity();
-                int size = GPUschedulerQueue.size();
-                // If the buffer of the GPU kernels scheduler is under pressure launch a thread on
-                // the CPU to handle the processing
-                if (capacity > size / 3 && !bufferUnderPressure || capacity > size) {
-                    bufferUnderPressure = false;
-                    GPUkernelSchedulerExec.execute(new GPUscheduler(lowResBitmap));
-                } else if (capacity <= size / 3 && meanluminance != 0 || bufferUnderPressure) { // Can't launch the CPU thread it the maximum luminance has not be sampled yet
-                    Log.e("DetectorService", "Buffer capacity is < 1/4th of size: Use software computation");
-                    luminanceCalculatorExec.execute(new luminanceCalculator(lowResBitmap));
-                    bufferUnderPressure = true;
-                }
+                GPUkernelSchedulerExec.execute(new GPUscheduler(lowResBitmap, previewBitmap));
             } catch (RejectedExecutionException e) {
                 String stackTrace = Log.getStackTraceString(e);
                 Log.e("DetectorService", stackTrace);
             }
-        }
-
-    }
-
-    /*
-    Runnable class which computes the luminance of a low res bitmap is GPU is under heavy stress
-    and cannot handle the computation itself.
-     */
-
-    private class luminanceCalculator implements Runnable {
-        private Bitmap bitmap;
-
-        luminanceCalculator(Bitmap bitmap) {
-            this.bitmap = bitmap;
-        }
-
-        @Override
-        public void run () {
-            int scaledWidth = bitmap.getWidth() / IN_SAMPLE_SIZE;
-            int scaledHeight = bitmap.getHeight() / IN_SAMPLE_SIZE;
-            int[] pixels = new int[scaledWidth * scaledHeight];
-            bitmap.getPixels(pixels, 0, scaledWidth, 0, 0, scaledWidth, scaledHeight);
-            float luminance, maxLuminance = 0;
-
-            // Compute the luminance for each pixel
-            for (int pixel : pixels) {
-                luminance = 0.2126f * Color.red(pixel) + 0.7152f * Color.green(pixel) + 0.0722f * Color.blue(pixel);
-                maxLuminance = luminance > maxLuminance ? luminance : maxLuminance;
-            }
-
-            if (maxLuminance > meanluminance + 5 * standardDeviation) {
-                Bitmap highResBitmap = Bitmap.createBitmap(retrieveLuminance(openCLObject), PREVIEW_WIDTH, PREVIEW_HEIGHT, Bitmap.Config.ARGB_8888);
-                try {
-                    jpegCreatorExecutor.execute(new jpegCreator(maxLuminance, highResBitmap));
-                } catch (RejectedExecutionException e) {
-                    String stackTrace = Log.getStackTraceString(e);
-                    Log.e("DetectorService", stackTrace);
-                }
-            }
-            /* [End of if] */
-        }
-        /* [End of run() ] */
-    }
-    
-    /*
-    Class which computes the kurtosis of the pixels luminance if the maximum luminance is outside
-    the standard deviation
-     */
-    
-    private class ComputeKurtosis implements Runnable {        
-        private int[] pixels;
-        private byte[] yuvData;
-        
-        ComputeKurtosis(int[] pixels, byte[] yuvData) {
-            this.pixels = pixels;
-            this.yuvData = yuvData;
-        }
-        
-        @Override
-        public void run() {
-            int N = pixels.length;
-            float K, x;
-
-            float sumX = 0, sumX2 = 0, sumX3 = 0, sumX4 = 0;
-            for (int pixel : pixels) {
-                x = 0.2126f * Color.red(pixel) + 0.7152f * Color.green(pixel) + 0.0722f * Color.blue(pixel);
-                sumX += x;
-                float x2 = x * x;
-                sumX2 += x2;
-                sumX3 += x2 * x;
-                sumX4 += x2 * x2;
-            }
-            float m = sumX / N;
-            float m2 = m * m;
-            K = ((N*m2*m2 - 4*m2*m*sumX + 6*m2*m2*sumX2 - 4*m*sumX3 + sumX4) / ((sumX2 - N*m2) * (sumX2 - N*m2)) - 3);
-            Log.d("DetectorService", "Kurtosis " + K);
-            if (K >= 0) {
-                //jpegCreatorExecutor.execute(new jpegCreator(yuvData));
-            }
-
         }
     }
 
@@ -249,27 +132,24 @@ public class DetectorService extends Service {
      */
 
     double maxLumi = 0;
-
     private int samplesTaken = 0; // Times the luminance has been sampled during the setup phase
+    int[] pixelsHW = new int[Constants.SCALED_WIDTH * Constants.SCALED_HEIGHT];
 
     private class GPUscheduler implements Runnable {
-        private Bitmap bitmap;
+        private Bitmap lowResBitamp, previewBitmap;
 
-
-        GPUscheduler(Bitmap bitmap)
+        GPUscheduler(Bitmap lowResBitamp, Bitmap previewBitmap)
         {
-            this.bitmap = bitmap;
+            this.lowResBitamp = lowResBitamp;
+            this.previewBitmap = previewBitmap;
         }
 
         @Override
         public void run() {
-            int scaledWidth = bitmap.getWidth() / IN_SAMPLE_SIZE;
-            int scaledHeight = bitmap.getHeight() / IN_SAMPLE_SIZE;
-            int[] pixels = new int[scaledWidth * scaledHeight];
-            bitmap.getPixels(pixels, 0, scaledWidth, 0, 0, scaledWidth, scaledHeight);
+            lowResBitamp.getPixels(pixelsHW, 0, Constants.SCALED_WIDTH, 0, 0, Constants.SCALED_WIDTH, Constants.SCALED_HEIGHT);
 
             if (samplesTaken <= NUM_OF_SAMPLES) {
-                double sampledLumi = computeluminance(openCLObject, pixels, (float)(meanluminance + 5 * standardDeviation));
+                double sampledLumi = computeluminance(openCLObject, pixelsHW);
                 meanluminance += sampledLumi;
                 meanSquaredLumi += sampledLumi * sampledLumi;
                 maxLumi = maxLumi > sampledLumi ? maxLumi : sampledLumi;
@@ -281,11 +161,13 @@ public class DetectorService extends Service {
                 samplesTaken++;
             }
             else {
-                float luminance = computeluminance(openCLObject, pixels, (float)(meanluminance + 5 * standardDeviation));
+                float luminance = computeluminance(openCLObject, pixelsHW);
                 if (luminance >= meanluminance + 5 * standardDeviation) {
-                    Bitmap highResBitmap = Bitmap.createBitmap(retrieveLuminance(openCLObject), PREVIEW_WIDTH, PREVIEW_HEIGHT, Bitmap.Config.ARGB_8888);
+                    int[] luminancePixels = new int[Constants.PREVIEW_WIDTH * Constants.PREVIEW_HEIGHT];
+                    previewBitmap.getPixels(luminancePixels, 0, Constants.PREVIEW_WIDTH, 0, 0, Constants.PREVIEW_WIDTH, Constants.PREVIEW_HEIGHT);
+                    Bitmap luminanceBitmap = Bitmap.createBitmap(retrieveLuminance(openCLObject, (float)meanluminance, luminancePixels), Constants.PREVIEW_WIDTH, Constants.PREVIEW_HEIGHT, Bitmap.Config.ARGB_8888);
                     try {
-                        jpegCreatorExecutor.execute(new jpegCreator(luminance, highResBitmap));
+                        jpegCreatorExecutor.execute(new jpegCreator(luminance, luminanceBitmap));
                     } catch (RejectedExecutionException e) {
                         String stackTrace = Log.getStackTraceString(e);
                         Log.e("DetectorService", stackTrace);
@@ -298,7 +180,7 @@ public class DetectorService extends Service {
     }
 
     /*
-    Class which creates a high res JPEG picture out of the bitmap yuvData if the luminance is above
+    Class which creates a high res JPEG picture out of the lowResBitamp yuvData if the luminance is above
     threshold, and save it to the storage memory of the device
      */
 
@@ -325,20 +207,7 @@ public class DetectorService extends Service {
                 File imageFile = createImageFile(luminance);
                 FileOutputStream fileOutputStream = new FileOutputStream(imageFile);
 
-                // Just like in the ImageConverter class we need first to convert the image from yuv to jpeg...
-                /*
-                YuvImage yuvImage = new YuvImage(yuvData, ImageFormat.NV21,PREVIEW_WIDTH, PREVIEW_HEIGHT, null);
-                ByteArrayOutputStream byteArrayOS = new ByteArrayOutputStream();
-                yuvImage.compressToJpeg(new Rect(0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT), 100, byteArrayOS);
-                byte[] data = byteArrayOS.toByteArray();
-
-                // ...then, as before, create a bitmap from the data
-                BitmapFactory.Options highResOptions = new BitmapFactory.Options();
-                Bitmap highResBitmap = BitmapFactory.decodeByteArray(data, 0, data.length, highResOptions);
-                */
-
-
-                // Store the bitmap in the file
+                // Store the lowResBitamp in the file
                 highResBitmap.compress(Bitmap.CompressFormat.JPEG, 100, fileOutputStream);
                 fileOutputStream.close();
             } catch (IOException e) {
@@ -369,9 +238,9 @@ public class DetectorService extends Service {
             }
 
             // Update the average frame rate every 1 sec
-            if (++frame == FRAME_RATE) {
+            if (++frame == Constants.FRAME_RATE) {
                 float timeMs = (System.nanoTime() - time) / 1000000; // Time in ms since the last time the average frame rate was updated
-                float framerate = (FRAME_RATE * 1000) / timeMs;
+                float framerate = (Constants.FRAME_RATE * 1000) / timeMs;
                 Log.d("DetectorService", "Average frame rate " + framerate + " mean lumi " + meanluminance + " standard dev " + standardDeviation + " max lumi " + maxLumi);
                 // TODO: Give the option to chose the threshold from the main menu
                 /*
@@ -517,16 +386,7 @@ public class DetectorService extends Service {
         // Get the kernel from the UI thread and initialize the OpenCL context with it
         assert intent != null;
         String kernel = intent.getStringExtra("Kernel");
-        openCLObject = initializeOpenCL(kernel, PREVIEW_WIDTH, PREVIEW_HEIGHT, IN_SAMPLE_SIZE);
-
-        // Initialization of the rendescript used to convert the preview frame from yuv to jpeg
-        RenderScript renderScript = RenderScript.create(this);
-        yuvToRgbIntrinsic = ScriptIntrinsicYuvToRGB.create(renderScript, Element.U8_4(renderScript));
-        previewImageSize = PREVIEW_WIDTH * PREVIEW_HEIGHT * ImageFormat.getBitsPerPixel(ImageFormat.NV21); // Since the default format for the preview is not changed we can assume it's NV21
-        allocatioIn = Allocation.createSized(renderScript, Element.U8(renderScript), previewImageSize);
-        previewBitmap = Bitmap.createBitmap(PREVIEW_WIDTH, PREVIEW_HEIGHT, Bitmap.Config.ARGB_8888);
-        allocationOut = Allocation.createFromBitmap(renderScript, previewBitmap);
-        yuvToRgbIntrinsic.setInput(allocatioIn);
+        openCLObject = initializeOpenCL(kernel, Constants.PREVIEW_WIDTH, Constants.PREVIEW_HEIGHT, Constants.IN_SAMPLE_SIZE);
 
         // Execute the runnable which will start the camera preview using the old api
         captureThreadExecutor.execute(new CaptureThread());
@@ -559,10 +419,10 @@ public class DetectorService extends Service {
                     parameters.setJpegQuality(100);
                     parameters.setAutoExposureLock(true);
                     parameters.setAutoWhiteBalanceLock(true);
-                    parameters.setPreviewSize(PREVIEW_WIDTH, PREVIEW_HEIGHT);
-                    parameters.setPreviewFpsRange(FRAME_RATE_MIN * 1000, FRAME_RATE * 1000);
-                    frontBuffer = new byte[previewImageSize];
-                    backBuffer = new byte[previewImageSize];
+                    parameters.setPreviewSize(Constants.PREVIEW_WIDTH, Constants.PREVIEW_HEIGHT);
+                    parameters.setPreviewFpsRange(Constants.FRAME_RATE_MIN * 1000, Constants.FRAME_RATE * 1000);
+                    frontBuffer = new byte[Constants.PREVIEW_IMAGE_SIZE];
+                    backBuffer = new byte[Constants.PREVIEW_IMAGE_SIZE];
                     legacyCamera.setParameters(parameters);
                     legacyCamera.setDisplayOrientation(90);
                     legacyCamera.addCallbackBuffer(frontBuffer);
@@ -618,7 +478,7 @@ public class DetectorService extends Service {
     }
 
     public native long initializeOpenCL(String kernel, int previewWidth, int previewHeight, int inSampleSize);
-    public native float computeluminance(long openCLObject, int[] pixels, float lumiThreshold);
-    public native int[] retrieveLuminance(long openCLObject);
+    public native float computeluminance(long openCLObject, int[] pixels);
+    public native int[] retrieveLuminance(long openCLObject, float lumiThreshold, int[] fullPixels);
     public native void closeOpenCL(long openCLObject);
 }

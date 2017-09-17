@@ -1,14 +1,73 @@
 <?xml version="1.0" encoding="utf-8"?>
-<android.support.constraint.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    tools:context="com.example.muondetector.MainActivity">
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:layout_width="fill_parent"
+    android:layout_height="wrap_content">
 
-    <SurfaceView
-        android:id="@+id/previewView"
+    <TextView android:id="@+id/network_parameters"
+        style="?android:attr/listSeparatorTextViewStyle"
+        android:text="@string/preview_parameters"
+        />
+
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_weight="1"
         android:layout_width="wrap_content"
-        android:layout_height="wrap_content" />
+        android:layout_height="0dp">
+        <TextView android:id="@+id/preview_fps_range"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/preview_fps_range"
+            />
+        <Spinner
+            android:id="@+id/preview_fps_range_spinner"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            />
+    </LinearLayout>
 
-</android.support.constraint.ConstraintLayout>
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_weight="1"
+        android:layout_width="wrap_content"
+        android:layout_height="0dp">
+        <TextView android:id="@+id/picture_size"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/picture_size"
+            />
+        <Spinner
+            android:id="@+id/picture_size_spinner"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            />
+    </LinearLayout>
+
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_weight="1"
+        android:layout_width="wrap_content"
+        android:layout_height="0dp">
+        <TextView android:id="@+id/in_sample_size"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/in_sample_size"
+            />
+        <EditText android:id="@+id/edit_in_sample_size"
+            android:inputType="number"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:hint="@string/edit_in_sample_size"
+            />
+    </LinearLayout>
+
+    <Button
+        android:layout_weight="1"
+        android:layout_width="wrap_content"
+        android:layout_height="0dp"
+        android:text="@string/start_service_button"
+        android:onClick="startService" />
+
+
+</LinearLayout>

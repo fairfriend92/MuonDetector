@@ -21,14 +21,16 @@ struct OpenCLObject {
     cl_command_queue commandQueue = 0;
     cl_program program = 0;
     cl_device_id device = 0;
-    cl_kernel kernel = 0;
+    int numberOfKernels = 2;
+    cl_kernel kernels[2] = {0, 0};
     cl_int errorNumber = 0;
-    int numberOfMemoryObjects = 4;
-    cl_mem memoryObjects[4] = {0, 0, 0, 0};
+    int numberOfMemoryObjects = 5;
+    cl_mem memoryObjects[5] = {0, 0, 0, 0, 0};
     cl_uint intVectorWidth;
 
     // Pointers to the memory buffers
     cl_int *pixels;
+    cl_int *fullPixels;
     cl_int *result;
     cl_int *luminance;
     cl_float *lumiThreshold;

@@ -4,9 +4,9 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
+import android.hardware.Camera;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
-import android.os.CountDownTimer;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
@@ -16,18 +16,23 @@ import android.os.Bundle;
 import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
+import android.view.View;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
+import android.widget.EditText;
+import android.widget.Spinner;
+import android.widget.Toast;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Scanner;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
 
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
+@SuppressWarnings("deprecation")
 public class MainActivity extends AppCompatActivity {
 
     SharedPreferences prefs;
@@ -118,6 +123,10 @@ public class MainActivity extends AppCompatActivity {
 
     SurfaceView preview;
     SurfaceHolder previewHolder;
+    List<int[]> supportedPreviewFpsRange;
+    List<Camera.Size> supportedPictureSizes;
+    Spinner fpsRangeSpinner, pictureSizeSpinner;
+    EditText editSampleSize = null;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -135,16 +144,95 @@ public class MainActivity extends AppCompatActivity {
         setContentView(R.layout.activity_main);
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
 
+        /* Camera settings */
+
+        // Check the camera settings that can be changed
+        Camera tmpCamera = Camera.open(); // Camera object used solely to retrieve info about the camera parameters
+        Camera.Parameters parameters = tmpCamera.getParameters();
+        supportedPreviewFpsRange = parameters.getSupportedPreviewFpsRange();
+        supportedPictureSizes = parameters.getSupportedPictureSizes();
+        Constants.FRAME_RATE_MIN = supportedPreviewFpsRange.get(0)[0] / 1000;
+        Constants.FRAME_RATE = supportedPreviewFpsRange.get(0)[1] / 1000;
+        Constants.PREVIEW_WIDTH = supportedPictureSizes.get(0).width;
+        Constants.PREVIEW_HEIGHT = supportedPictureSizes.get(0).height;
+        tmpCamera.release();
+
+        // Populate a spinner with the supported FPS ranges
+        List<String> fpsRangeString = new ArrayList<>(supportedPreviewFpsRange.size());
+        for (int i = 0; i < supportedPreviewFpsRange.size(); i++)
+            fpsRangeString.add("(" + supportedPreviewFpsRange.get(i)[0] + ", " + supportedPreviewFpsRange.get(i)[1] + ")");
+        fpsRangeSpinner = (Spinner) findViewById(R.id.preview_fps_range_spinner);
+        ArrayAdapter<String> fpsRangesArrayAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, fpsRangeString);
+        fpsRangeSpinner.setAdapter(fpsRangesArrayAdapter);
+        fpsRangeSpinner.setOnItemSelectedListener(new SpinnerListener());
+
+        // Populate a spinner with the supported picture sizes
+        List<String> pictureSizesString = new ArrayList<>(supportedPictureSizes.size());
+        for (int i = 0; i < supportedPictureSizes.size(); i++)
+            pictureSizesString.add(supportedPictureSizes.get(i).width + " X " + supportedPictureSizes.get(i).height);
+        pictureSizeSpinner = (Spinner) findViewById(R.id.picture_size_spinner);
+        ArrayAdapter<String> pictureSizesArrayAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, pictureSizesString);
+        pictureSizeSpinner.setAdapter(pictureSizesArrayAdapter);
+        pictureSizeSpinner.setOnItemSelectedListener(new SpinnerListener());
+
+        /* [End of camera settings] */
+
+        editSampleSize = (EditText) findViewById(R.id.edit_in_sample_size);
+
+        // Create the handler thread to load the appropriate kernel based on GPU model
         handlerThread = new HandlerThread("RendererRetrieverThread");
         handlerThread.start();
         Looper looper = handlerThread.getLooper();
         Handler handler = new Handler(looper);
         handler.post(new RendererRetriever());
+    }
+
+    String kernel;
+
+    public void startService(View view) {
+        // Read from the editable box the sample size used to downscale the picture
+        Constants.IN_SAMPLE_SIZE = Integer.parseInt(editSampleSize.getText().toString());
+        if (Constants.IN_SAMPLE_SIZE > 4 || Constants.IN_SAMPLE_SIZE == 0) { // If the number is out of range notifies the user and select the deafult value (1 - no downscale)
+            CharSequence text = "Wrong number for sample size. Will use 1.";
+            Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
+            Constants.IN_SAMPLE_SIZE = 1;
+        }
+        Constants.computeAdditionalValues();
+
+        setContentView(R.layout.preview);
 
         // Create surface to preview the capture
         preview = (SurfaceView) findViewById(R.id.previewView);
         previewHolder = preview.getHolder();
         previewHolder.addCallback(DetectorService.surfaceHolderCallback);
+
+        // Create the intent for the main service and bundle the string containing the OpenCL kernel
+        Intent detectorIntent = new Intent(MainActivity.this, DetectorService.class);
+        detectorIntent.putExtra("Kernel", kernel);
+        MainActivity.this.startService(detectorIntent);
+    }
+
+    /*
+     * Simple class that saves the preview settings depending of the spinner items selected
+     */
+
+    private class SpinnerListener implements AdapterView.OnItemSelectedListener {
+
+        @Override
+        public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+            if (parent.getId() == fpsRangeSpinner.getId()) {
+                Constants.FRAME_RATE_MIN = supportedPreviewFpsRange.get(position)[0] / 1000;
+                Constants.FRAME_RATE = supportedPreviewFpsRange.get(position)[1] / 1000;
+            } else if (parent.getId() == pictureSizeSpinner.getId()) {
+                Constants.PREVIEW_WIDTH = supportedPictureSizes.get(position).width;
+                Constants.PREVIEW_HEIGHT = supportedPictureSizes.get(position).height;
+            }
+        }
+
+        @Override
+        public void onNothingSelected(AdapterView<?> parent) {
+
+        }
     }
 
     /*
@@ -193,7 +281,6 @@ public class MainActivity extends AppCompatActivity {
             assert renderer != null;
 
             // Load the appropriate OpenCL kernel based on GPU model
-            String kernel;
             switch (renderer) {
                 case "Mali-T880":
                 case "Mali-T720":
@@ -206,11 +293,6 @@ public class MainActivity extends AppCompatActivity {
 
             // Load the appropriate OpenCL library based on the GPU vendor
             loadGLLibrary();
-
-            // Create the intent for the main service and bundle the string containing the OpenCL kernel
-            Intent detectorIntent = new Intent(MainActivity.this, DetectorService.class);
-            detectorIntent.putExtra("Kernel", kernel);
-            MainActivity.this.startService(detectorIntent);
         }
     }
 }
