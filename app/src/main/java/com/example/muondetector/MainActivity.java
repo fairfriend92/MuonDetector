@@ -126,7 +126,7 @@ public class MainActivity extends AppCompatActivity {
     List<int[]> supportedPreviewFpsRange;
     List<Camera.Size> supportedPictureSizes;
     Spinner fpsRangeSpinner, pictureSizeSpinner;
-    EditText editSampleSize = null;
+    EditText editSampleSize = null, editCalibrationDuration = null, editCropFactor = null;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -178,6 +178,8 @@ public class MainActivity extends AppCompatActivity {
         /* [End of camera settings] */
 
         editSampleSize = (EditText) findViewById(R.id.edit_in_sample_size);
+        editCalibrationDuration = (EditText) findViewById(R.id.edit_calibration_duration);
+        editCropFactor = (EditText) findViewById(R.id.edit_crop_factor);
 
         // Create the handler thread to load the appropriate kernel based on GPU model
         handlerThread = new HandlerThread("RendererRetrieverThread");
@@ -191,12 +193,39 @@ public class MainActivity extends AppCompatActivity {
 
     public void startService(View view) {
         // Read from the editable box the sample size used to downscale the picture
-        Constants.IN_SAMPLE_SIZE = Integer.parseInt(editSampleSize.getText().toString());
+        try {
+            Constants.IN_SAMPLE_SIZE = Integer.parseInt(editSampleSize.getText().toString());
+        } catch (NumberFormatException e) {
+            Log.e("MainActivity", "editSampleSize does not contain a parsable string. Default value (1) is used");
+            Constants.IN_SAMPLE_SIZE = 1;
+        }
         if (Constants.IN_SAMPLE_SIZE > 4 || Constants.IN_SAMPLE_SIZE == 0) { // If the number is out of range notifies the user and select the deafult value (1 - no downscale)
             CharSequence text = "Wrong number for sample size. Will use 1.";
             Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
             Constants.IN_SAMPLE_SIZE = 1;
         }
+
+        // Read the calibration phase length
+        try {
+            Constants.CALIBRATION_DURATION = Integer.parseInt(editCalibrationDuration.getText().toString());
+        } catch (NumberFormatException e) {
+            Log.e("MainActivity", "editCalibrationDuration does not contain a parsable string. Default value (240) is used");
+            Constants.CALIBRATION_DURATION = 240;
+        }
+
+        // Read the crop factor
+        try {
+            Constants.CROP_FACTOR = Integer.parseInt(editCropFactor.getText().toString());
+        } catch (NumberFormatException e) {
+            Log.e("MainActivity", "editCropFactor does not contain a parsable string. Default value (240) is used");
+            Constants.CROP_FACTOR = 100;
+        }
+        if (Constants.CROP_FACTOR > 100 || Constants.CROP_FACTOR == 0) {
+            CharSequence text = "Wrong number for crop factor. Will use 100.";
+            Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
+            Constants.CROP_FACTOR = 100;
+        }
+
         Constants.computeAdditionalValues();
 
         setContentView(R.layout.preview);

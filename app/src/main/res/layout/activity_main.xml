@@ -62,6 +62,47 @@
             />
     </LinearLayout>
 
+    <TextView android:id="@+id/other_settings"
+        style="?android:attr/listSeparatorTextViewStyle"
+        android:text="@string/other_settings"
+        />
+
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_weight="1"
+        android:layout_width="wrap_content"
+        android:layout_height="0dp">
+        <TextView android:id="@+id/calibration_duration"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/calibration_duration"
+            />
+        <EditText android:id="@+id/edit_calibration_duration"
+            android:inputType="number"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:hint="@string/edit_calibration_duration"
+            />
+    </LinearLayout>
+
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_weight="1"
+        android:layout_width="wrap_content"
+        android:layout_height="0dp">
+        <TextView android:id="@+id/crop_factor"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/crop_factor"
+            />
+        <EditText android:id="@+id/edit_crop_factor"
+            android:inputType="number"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:hint="@string/edit_crop_factor"
+            />
+    </LinearLayout>
+
     <Button
         android:layout_weight="1"
         android:layout_width="wrap_content"

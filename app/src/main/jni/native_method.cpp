@@ -200,7 +200,7 @@ extern "C" jfloat Java_com_example_muondetector_DetectorService_computeluminance
 
     /* [Set Kernel Arguments] */
 
-    // Tell the kernels which data to use before they are scheduled
+    // Tell the kernel which data to use before it's scheduled
     bool setKernelArgumentSuccess = true;
     setKernelArgumentSuccess &= checkSuccess(clSetKernelArg(obj->kernels[0], 0, sizeof(cl_mem), &obj->memoryObjects[0]));
     setKernelArgumentSuccess &= checkSuccess(clSetKernelArg(obj->kernels[0], 1, sizeof(cl_mem), &obj->memoryObjects[1]));
@@ -271,7 +271,7 @@ extern "C" jfloat Java_com_example_muondetector_DetectorService_computeluminance
     return resultFloat;
 }
 
-extern "C" jintArray Java_com_example_muondetector_DetectorService_retrieveLuminance(
+extern "C" jintArray Java_com_example_muondetector_DetectorService_luminanceMap(
         JNIEnv *env, jobject thiz, jlong jOpenCLObject, jfloat jLumiThreshold, jintArray jPixels) {
 
     struct OpenCLObject *obj;
@@ -279,20 +279,32 @@ extern "C" jintArray Java_com_example_muondetector_DetectorService_retrieveLumin
 
     jint *pixels = env->GetIntArrayElements(jPixels, JNI_FALSE);
 
-    bool mapMemoryObjectsSuccess = true;
+    /* [Map the input buffers] */
 
+    // Map the input buffer storing the value of the luminance which serves as a parameter of the non linear transformation which generates the output map
+    bool mapMemoryObjectsSuccess = true;
     obj->lumiThreshold = (cl_float *)clEnqueueMapBuffer(obj->commandQueue, obj->memoryObjects[3], CL_TRUE, CL_MAP_WRITE, 0,
                                                         sizeof(cl_float), 0, NULL, NULL, &obj->errorNumber);
     mapMemoryObjectsSuccess &= checkSuccess(obj->errorNumber);
 
+    // Catch eventual errors
+    if (!mapMemoryObjectsSuccess)
+    {
+        cleanUpOpenCL(obj->context, obj->commandQueue, obj->program, obj->kernels, obj->numberOfKernels, obj->memoryObjects, obj->numberOfMemoryObjects);
+        LOGE("Failed to map buffer");
+    }
+
+    // Store the value in the buffer
     obj->lumiThreshold[0] = (cl_float)jLumiThreshold;
 
+    // Un-map the memory object
     if (!checkSuccess(clEnqueueUnmapMemObject(obj->commandQueue, obj->memoryObjects[3], obj->lumiThreshold, 0, NULL, NULL)))
     {
         cleanUpOpenCL(obj->context, obj->commandQueue, obj->program, obj->kernels, obj->numberOfKernels, obj->memoryObjects, obj->numberOfMemoryObjects);
         LOGE("Unmap memory objects failed");
     }
 
+    // Map the buffer which stores the RGB values of the pixels from which the kernel must build the luminance map
     obj->fullPixels = (cl_int *)clEnqueueMapBuffer(obj->commandQueue, obj->memoryObjects[4], CL_TRUE, CL_MAP_WRITE, 0,
                                                lumiBufferSize, 0, NULL, NULL, &obj->errorNumber);
     mapMemoryObjectsSuccess &= checkSuccess(obj->errorNumber);
@@ -317,7 +329,12 @@ extern "C" jintArray Java_com_example_muondetector_DetectorService_retrieveLumin
         LOGE("Unmap memory objects failed");
     }
 
+    /* [Map the input buffers] */
+
+    // Now that the buffer containing the RGB values has been initialized, the array of pixels can be released
     env->ReleaseIntArrayElements(jPixels, pixels, 0);
+
+    /* [Schedule and execute the kernel] */
 
     // Tell the kernels which data to use before they are scheduled
     bool setKernelArgumentSuccess = true;
@@ -332,7 +349,7 @@ extern "C" jintArray Java_com_example_muondetector_DetectorService_retrieveLumin
         LOGE("Failed to set OpenCL kernel arguments");
     }
 
-    size_t globalWorksize[1] = {(size_t) (pixelCount / 4)};
+    size_t globalWorksize[1] = {(size_t) (pixelCount / 4)}; // Global size is divided by four since the kerenl uses vector units 128-bit wide
 
     bool openCLFailed = false;
 
@@ -352,6 +369,10 @@ extern "C" jintArray Java_com_example_muondetector_DetectorService_retrieveLumin
         openCLFailed = true;
     }
 
+    /* [Schedule and execute the kernel] */
+
+    /* [Map the output buffer] */
+
     obj->luminance = (cl_int *)clEnqueueMapBuffer(obj->commandQueue, obj->memoryObjects[2], CL_TRUE, CL_MAP_READ, 0,
                                                   lumiBufferSize, 0, NULL, NULL, &obj->errorNumber);
     mapMemoryObjectsSuccess &= checkSuccess(obj->errorNumber);
@@ -365,13 +386,16 @@ extern "C" jintArray Java_com_example_muondetector_DetectorService_retrieveLumin
     jintArray jLuminanceBuffer = env->NewIntArray(pixelCount);
 
     // Copy the content in the buffer to the java array, using the pointer created by the OpenCL implementation
-    env->SetIntArrayRegion(jLuminanceBuffer, 0, samplePixelCount, reinterpret_cast<jint*>(obj->luminance));
+    env->SetIntArrayRegion(jLuminanceBuffer, 0, pixelCount, reinterpret_cast<jint*>(obj->luminance));
 
     if (!checkSuccess(clEnqueueUnmapMemObject(obj->commandQueue, obj->memoryObjects[2], obj->luminance, 0, NULL, NULL)))
     {
         cleanUpOpenCL(obj->context, obj->commandQueue, obj->program, obj->kernels, obj->numberOfKernels, obj->memoryObjects, obj->numberOfMemoryObjects);
         LOGE("Unmap memory objects failed");
     }
+
+    /* [Map the output buffer] */
+
 
     if (openCLFailed)
         jLuminanceBuffer = NULL;

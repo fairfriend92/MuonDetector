@@ -6,4 +6,9 @@
     <string name="picture_size">Picture size</string>
     <string name="edit_in_sample_size">Choose an int in [1, 4]</string>
     <string name="in_sample_size">Sample size</string>
+    <string name="calibration_duration">Calibration phase length</string>
+    <string name="edit_calibration_duration">Choose a length in sec</string>
+    <string name="other_settings">Other settings</string>
+    <string name="crop_factor">Crop factor</string>
+    <string name="edit_crop_factor">% of image to process</string>
 </resources>
