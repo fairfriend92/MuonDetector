@@ -99,7 +99,7 @@ public class DetectorService extends Service {
             // Convert the yuv image to jpeg
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             YuvImage yuv = new YuvImage(yuvData, ImageFormat.NV21, Constants.PREVIEW_WIDTH, Constants.PREVIEW_HEIGHT, null);
-            yuv.compressToJpeg(new Rect(0, 0, Constants.CROP_WIDTH, Constants.CROP_HEIGHT), 100, out);
+            yuv.compressToJpeg(new Rect(Constants.CROP_TOP_X, Constants.CROP_TOP_Y, Constants.CROP_BOTTOM_X, Constants.CROP_BOTTOM_Y), 100, out);
 
             // Create a full resolution bitmap from the jpeg
             byte[] bytes = out.toByteArray();
@@ -146,7 +146,7 @@ public class DetectorService extends Service {
             } else if (samplesTaken == Constants.NUM_OF_SAMPLES + 1) { // If the calibration phase has just ended...
                 meanLuminance /= Constants.NUM_OF_SAMPLES;
                 meanSquaredLumi /= Constants.NUM_OF_SAMPLES;
-                standardDeviation = Math.sqrt((meanSquaredLumi - meanLuminance * meanLuminance) * Constants.NUM_OF_SAMPLES / (Constants.NUM_OF_SAMPLES - 1));
+                standardDeviation = Math.sqrt(Math.abs(meanSquaredLumi - meanLuminance * meanLuminance) * Constants.NUM_OF_SAMPLES / (Constants.NUM_OF_SAMPLES - 1));
                 samplesTaken++;
             } else { // When the calibration is done...
                 float luminance = computeluminance(openCLObject, pixels);
@@ -197,8 +197,9 @@ public class DetectorService extends Service {
                 previewBitmap.getPixels(pixels, 0, Constants.CROP_WIDTH, 0, 0, Constants.CROP_WIDTH, Constants.CROP_HEIGHT);
 
                 // Create the bitmap storing the luminance map
+                float lumiThreshold = (float)((meanLuminance + 5 * standardDeviation) / 255.0f);
                 Bitmap luminanceBitmap =
-                        Bitmap.createBitmap(luminanceMap(openCLObject, (float)(meanLuminance + 5 * standardDeviation), pixels), Constants.CROP_WIDTH, Constants.CROP_HEIGHT, Bitmap.Config.ARGB_8888);
+                        Bitmap.createBitmap(luminanceMap(openCLObject, lumiThreshold, pixels), Constants.CROP_WIDTH, Constants.CROP_HEIGHT, Bitmap.Config.ARGB_8888);
 
                 // Create the file that will store the image
                 File imageFile = createImageFile(luminance);
