@@ -17,16 +17,31 @@ float computeLumi(int pixel) {
 int compScaledLumi(float lumi, __global float* restrict lumiThreshold) {
 
   // Non-linear scaling 
-  float scaledLumi = lumi < lumiThreshold[0] ? CUTOFF * pown(lumi / lumiThreshold[0], 2) : native_sqrt(lumi) * SCALE + CUTOFF;
+  //float scaledLumi = lumi < lumiThreshold[0] ? CUTOFF * pown(lumi / lumiThreshold[0], 2) : native_sqrt(lumi) * SCALE + CUTOFF;  
 
-  // Luminance map uses a gradation of color, from red to white, through yellow  
+  // Luminance map uses a gradation of color, from red to white, through yellow
+  /*
   if (scaledLumi < 85) {
     return (ALPHA & 0xff) << 24 | ((int)(scaledLumi) & 0xff) << 16;
   } else if (scaledLumi < 170) {
     return (ALPHA & 0xff) << 24 | (255 & 0xff) << 16 | ((int)(scaledLumi) & 0xff) << 8;
   } else {
     return (ALPHA & 0xff) << 24 | (255 & 0xff) << 16 | (255 & 0xff) << 8 | ((int)(scaledLumi) & 0xff);
-  }  
+  } 
+  */
+
+  float scaledLumi = lumi * 255.0f;
+
+  float red = lumiThreshold[0] / 3;
+  float yellow = lumiThreshold[0] * 2 / 3;
+
+  if (scaledLumi < red) {
+    return (ALPHA & 0xff) << 24 | ((int)((scaledLumi - red) / (yellow - red) * 255.0f) & 0xff) << 16;
+  } else if (scaledLumi < yellow) {
+    return (ALPHA & 0xff) << 24 | (255 & 0xff) << 16 | ((int)((scaledLumi - yellow) / (255.0f - yellow) * 255.0f) & 0xff) << 8;
+  } else {
+    return (ALPHA & 0xff) << 24 | (255 & 0xff) << 16 | (255 & 0xff) << 8 | ((int)(scaledLumi) & 0xff);
+  } 
 }
 
 /* Compute the maximum luminance for a given picture */

@@ -21,6 +21,7 @@ class Constants {
     static int CROP_TOP_Y = 0;
     static int CROP_BOTTOM_X = 0;
     static int CROP_BOTTOM_Y = 0;
+    static int NUM_OF_SD = 5;
 
     static  void computeAdditionalValues() {
         CROP_WIDTH = (int)(PREVIEW_WIDTH * CROP_FACTOR / 100);
@@ -33,6 +34,5 @@ class Constants {
         SCALED_HEIGHT = CROP_HEIGHT / IN_SAMPLE_SIZE;
         PREVIEW_IMAGE_SIZE = Constants.PREVIEW_WIDTH * Constants.PREVIEW_HEIGHT * ImageFormat.getBitsPerPixel(ImageFormat.NV21);
         NUM_OF_SAMPLES = FRAME_RATE_MIN * CALIBRATION_DURATION;
-
     }
 }

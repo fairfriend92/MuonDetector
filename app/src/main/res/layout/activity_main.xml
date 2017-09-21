@@ -103,6 +103,24 @@
             />
     </LinearLayout>
 
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_weight="1"
+        android:layout_width="wrap_content"
+        android:layout_height="0dp">
+        <TextView android:id="@+id/num_of_sd"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/num_of_sd"
+            />
+        <EditText android:id="@+id/edit_num_of_sd"
+            android:inputType="number"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:hint="@string/edit_num_of_sd"
+            />
+    </LinearLayout>
+
     <Button
         android:layout_weight="1"
         android:layout_width="wrap_content"

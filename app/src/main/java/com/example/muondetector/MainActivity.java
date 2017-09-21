@@ -126,7 +126,7 @@ public class MainActivity extends AppCompatActivity {
     List<int[]> supportedPreviewFpsRange;
     List<Camera.Size> supportedPictureSizes;
     Spinner fpsRangeSpinner, pictureSizeSpinner;
-    EditText editSampleSize = null, editCalibrationDuration = null, editCropFactor = null;
+    EditText editSampleSize = null, editCalibrationDuration = null, editCropFactor = null, editNumOfSd = null;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -180,6 +180,7 @@ public class MainActivity extends AppCompatActivity {
         editSampleSize = (EditText) findViewById(R.id.edit_in_sample_size);
         editCalibrationDuration = (EditText) findViewById(R.id.edit_calibration_duration);
         editCropFactor = (EditText) findViewById(R.id.edit_crop_factor);
+        editNumOfSd = (EditText) findViewById(R.id.edit_num_of_sd);
 
         // Create the handler thread to load the appropriate kernel based on GPU model
         handlerThread = new HandlerThread("RendererRetrieverThread");
@@ -217,13 +218,26 @@ public class MainActivity extends AppCompatActivity {
         try {
             Constants.CROP_FACTOR = Integer.parseInt(editCropFactor.getText().toString());
         } catch (NumberFormatException e) {
-            Log.e("MainActivity", "editCropFactor does not contain a parsable string. Default value (240) is used");
+            Log.e("MainActivity", "editCropFactor does not contain a parsable string. Default value (100) is used");
             Constants.CROP_FACTOR = 100;
         }
         if (Constants.CROP_FACTOR > 100 || Constants.CROP_FACTOR == 0) {
             CharSequence text = "Wrong number for crop factor. Will use 100.";
             Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
             Constants.CROP_FACTOR = 100;
+        }
+
+        // Read number of standard deviations
+        try {
+            Constants.NUM_OF_SD = Integer.parseInt(editNumOfSd.getText().toString());
+        } catch (NumberFormatException e) {
+            Log.e("MainActivity", "editNumOfSd does not contain a parsable string. Default value (5) is used");
+            Constants.NUM_OF_SD = 5;
+        }
+        if (Constants.NUM_OF_SD > 10 || Constants.NUM_OF_SD == 0) {
+            CharSequence text = "Wrong number for standard deviations. Will use 5.";
+            Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
+            Constants.CROP_FACTOR = 5;
         }
 
         Constants.computeAdditionalValues();
@@ -234,6 +248,8 @@ public class MainActivity extends AppCompatActivity {
         preview = (SurfaceView) findViewById(R.id.previewView);
         previewHolder = preview.getHolder();
         previewHolder.addCallback(DetectorService.surfaceHolderCallback);
+
+        handlerThread.quit();
 
         // Create the intent for the main service and bundle the string containing the OpenCL kernel
         Intent detectorIntent = new Intent(MainActivity.this, DetectorService.class);
@@ -290,7 +306,6 @@ public class MainActivity extends AppCompatActivity {
     protected void onDestroy() {
         super.onDestroy();
         DetectorService.legacyCamera.release();
-        handlerThread.quit();
     }
 
     private class RendererRetriever implements Runnable {
