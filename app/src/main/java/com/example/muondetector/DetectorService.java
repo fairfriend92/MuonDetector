@@ -78,7 +78,7 @@ public class DetectorService extends Service {
     private NotificationCompat.Builder notificationBuilder;
     private boolean notificationShowed = false;
     private long openCLObject = 0;
-    private double meanLuminance = 0, meanSquaredLumi = 0, standardDeviation = 0;
+    private double meanLuminance = 0, meanSquaredLumi = 0, standardDeviation = 0, maxLuminance = 0;
     private int samplesTaken = 0; // Times the luminance has been sampled during the setup phase
 
 
@@ -103,13 +103,11 @@ public class DetectorService extends Service {
 
             // Create a low resolution bitmap from the jpeg
             byte[] bytes = out.toByteArray();
-            BitmapFactory.Options options = new BitmapFactory.Options();
-            options.inSampleSize = Constants.IN_SAMPLE_SIZE;
-            Bitmap lowResBitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length, options);
+            Bitmap lowResBitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
 
             // Pass the bitmap to the GPU scheduler
             try {
-                GPUkernelSchedulerExec.execute(new GPUscheduler(lowResBitmap, yuvData));
+                GPUkernelSchedulerExec.execute(new GPUscheduler(lowResBitmap));
             } catch (RejectedExecutionException e) {
                 String stackTrace = Log.getStackTraceString(e);
                 Log.e("DetectorService", stackTrace);
@@ -118,25 +116,41 @@ public class DetectorService extends Service {
     }
 
     /*
+    Callback for when a picture is take. Calls a separate thread which schedules the openCL kernel that
+    creates the luminance map and save in storage the resulting picture
+     */
+
+    private Camera.PictureCallback pictureCallback = new Camera.PictureCallback() {
+        @Override
+        public void onPictureTaken(byte[] data, Camera camera) {
+            try {
+                jpegCreatorExecutor.execute(new jpegCreator(data));
+            } catch (RejectedExecutionException e) {
+                String stackTrace = Log.getStackTraceString(e);
+                Log.e("DetectorService", stackTrace);
+            }
+
+        }
+    };
+
+    /*
     Class which sends the RGB values to the native side of the application which store them in the
     GPU memory to be processed by the openCL kernel
      */
 
     private class GPUscheduler implements Runnable {
         private Bitmap lowResBitmap;
-        private byte[] yuvData;
 
-        GPUscheduler(Bitmap lowResBitmap, byte[] yuvData)
+        GPUscheduler(Bitmap lowResBitmap)
         {
             this.lowResBitmap = lowResBitmap;
-            this.yuvData = yuvData;
         }
 
         @Override
         public void run() {
             // Get from the bitmap the RGB values
-            int[] pixels = new int[Constants.SCALED_WIDTH * Constants.SCALED_HEIGHT];
-            lowResBitmap.getPixels(pixels, 0, Constants.SCALED_WIDTH, 0, 0, Constants.SCALED_WIDTH, Constants.SCALED_HEIGHT);
+            int[] pixels = new int[Constants.CROP_PREVIEW_WIDTH * Constants.CROP_PREVIEW_HEIGHT];
+            lowResBitmap.getPixels(pixels, 0, Constants.CROP_PREVIEW_WIDTH, 0, 0, Constants.CROP_PREVIEW_WIDTH, Constants.CROP_PREVIEW_HEIGHT);
 
             // During the calibration phase compute the average maximum luminance (defined as the greatest value of the luminance for one picture instance)
             if (samplesTaken <= Constants.NUM_OF_SAMPLES) { // If the calibration phase has not endend...
@@ -144,7 +158,6 @@ public class DetectorService extends Service {
                 meanLuminance += sampledLumi;
                 meanSquaredLumi += sampledLumi * sampledLumi;
                 samplesTaken++;
-                yuvData = null;
             } else if (samplesTaken == Constants.NUM_OF_SAMPLES + 1) { // If the calibration phase has just ended...
                 meanLuminance /= Constants.NUM_OF_SAMPLES;
                 meanSquaredLumi /= Constants.NUM_OF_SAMPLES;
@@ -153,18 +166,11 @@ public class DetectorService extends Service {
             } else { // When the calibration is done...
                 float luminance = computeluminance(openCLObject, pixels);
                 if (luminance >= meanLuminance + Constants.NUM_OF_SD * standardDeviation) {
-                    try {
-                        jpegCreatorExecutor.execute(new jpegCreator(luminance, yuvData));
-                    } catch (RejectedExecutionException e) {
-                        String stackTrace = Log.getStackTraceString(e);
-                        Log.e("DetectorService", stackTrace);
-                    }
+                    maxLuminance = luminance;
+                    legacyCamera.takePicture(null, null, null, pictureCallback);
                 }
             }
             /* [End of if] */
-
-            lowResBitmap.recycle();
-            lowResBitmap = null;
 
         }
         /* [End of run()] */
@@ -176,12 +182,10 @@ public class DetectorService extends Service {
      */
 
     private class jpegCreator implements Runnable {
-        private float luminance;
-        private byte[] yuvData;
+        private byte[] jpegData;
 
-        jpegCreator(float luminance, byte[] yuvData) {
-            this.luminance = luminance;
-            this.yuvData = yuvData;
+        jpegCreator(byte[] jpegData) {
+            this.jpegData = jpegData;
         }
 
         @Override
@@ -196,38 +200,36 @@ public class DetectorService extends Service {
 
                 /* Create high-resolution bitmap from the RGB values*/
 
-                // Convert the yuv image to jpeg
-                ByteArrayOutputStream out = new ByteArrayOutputStream();
-                YuvImage yuv = new YuvImage(yuvData, ImageFormat.NV21, Constants.PREVIEW_WIDTH, Constants.PREVIEW_HEIGHT, null);
-                yuv.compressToJpeg(new Rect(Constants.CROP_TOP_X, Constants.CROP_TOP_Y, Constants.CROP_BOTTOM_X, Constants.CROP_BOTTOM_Y), 100, out);
-
                 // Create a high resolution bitmap from the jpeg
-                byte[] bytes = out.toByteArray();
-                Bitmap highResBitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+                BitmapRegionDecoder regionDecoder = BitmapRegionDecoder.newInstance(jpegData, 0, jpegData.length, true);
+                Rect croppedRegion = new Rect(Constants.CROP_PIC_TOP_X, Constants.CROP_PIC_TOP_Y, Constants.CROP_PIC_BOTTOM_X, Constants.CROP_PIC_BOTTOM_Y);
+                Bitmap highResBitmap = regionDecoder.decodeRegion(croppedRegion, null);
 
                 /* Create a bitmap from the luminance map */
 
                 // Create the array storing the full resolution preview picture
-                int[] pixels = new int[Constants.CROP_WIDTH * Constants.CROP_HEIGHT];
+                int[] pixels = new int[Constants.CROP_PICTURE_WIDTH * Constants.CROP_PICTURE_HEIGHT];
 
                 // Save in the array the RGB values
-                highResBitmap.getPixels(pixels, 0, Constants.CROP_WIDTH, 0, 0, Constants.CROP_WIDTH, Constants.CROP_HEIGHT);
+                highResBitmap.getPixels(pixels, 0, Constants.CROP_PICTURE_WIDTH, 0, 0, Constants.CROP_PICTURE_WIDTH, Constants.CROP_PICTURE_HEIGHT);
 
                 // Create the bitmap storing the luminance map
-                float lumiThreshold = luminance;
                 Bitmap luminanceBitmap =
-                        Bitmap.createBitmap(luminanceMap(openCLObject, lumiThreshold, pixels), Constants.CROP_WIDTH, Constants.CROP_HEIGHT, Bitmap.Config.ARGB_8888);
+                        Bitmap.createBitmap(luminanceMap(openCLObject, (float)maxLuminance, pixels), Constants.CROP_PICTURE_WIDTH, Constants.CROP_PICTURE_HEIGHT, Bitmap.Config.ARGB_8888);
 
                 // Create the file that will store the image
-                File imageFile = createImageFile(luminance);
+                File imageFile = createImageFile((float)maxLuminance);
                 FileOutputStream fileOutputStream = new FileOutputStream(imageFile);
 
                 // Store the luminance map in the file
                 luminanceBitmap.compress(Bitmap.CompressFormat.JPEG, 100, fileOutputStream);
                 fileOutputStream.close();
 
-                highResBitmap.recycle();
-                highResBitmap = null;
+                // Restart preview
+                legacyCamera.stopPreview();
+                legacyCamera.setPreviewDisplay(surfaceHolder);
+                legacyCamera.setPreviewCallback(previewCallback);
+                legacyCamera.startPreview();
             } catch (IOException e) {
                 String stackTrace = Log.getStackTraceString(e);
                 Log.e("DetectorService", stackTrace);
@@ -407,7 +409,7 @@ public class DetectorService extends Service {
         // Get the kernel from the UI thread and initialize the OpenCL context with it
         assert intent != null;
         String kernel = intent.getStringExtra("Kernel");
-        openCLObject = initializeOpenCL(kernel, Constants.CROP_WIDTH, Constants.CROP_HEIGHT, Constants.IN_SAMPLE_SIZE);
+        openCLObject = initializeOpenCL(kernel, Constants.CROP_PREVIEW_WIDTH, Constants.CROP_PREVIEW_HEIGHT, Constants.CROP_PICTURE_WIDTH, Constants.CROP_PICTURE_HEIGHT);
 
         // Execute the runnable which will start the camera preview using the old api
         captureThreadExecutor.execute(new CaptureThread());
@@ -430,6 +432,7 @@ public class DetectorService extends Service {
                     if (parametersString.contains("iso-speed")) {
                         parameters.set("iso-speed", 1600);
                     }
+                    /*
                     parameters.set("saturation", "high");
                     parameters.set("brightness", "high");
                     parameters.setAntibanding(Camera.Parameters.ANTIBANDING_OFF);
@@ -437,11 +440,14 @@ public class DetectorService extends Service {
                     parameters.setExposureCompensation(parameters.getMaxExposureCompensation());
                     parameters.setFlashMode(Camera.Parameters.FLASH_MODE_OFF);
                     parameters.setWhiteBalance(Camera.Parameters.WHITE_BALANCE_SHADE);
-                    parameters.setJpegQuality(100);
                     parameters.setAutoExposureLock(true);
                     parameters.setAutoWhiteBalanceLock(true);
+                    parameters.setJpegQuality(100);
+                    */
                     parameters.setPreviewSize(Constants.PREVIEW_WIDTH, Constants.PREVIEW_HEIGHT);
                     parameters.setPreviewFpsRange(Constants.FRAME_RATE_MIN * 1000, Constants.FRAME_RATE * 1000);
+                    parameters.setPictureSize(Constants.PICTURE_WIDTH, Constants.PICTURE_HEIGHT);
+                    parameters.setPictureFormat(ImageFormat.JPEG);
                     frontBuffer = new byte[Constants.PREVIEW_IMAGE_SIZE];
                     backBuffer = new byte[Constants.PREVIEW_IMAGE_SIZE];
                     legacyCamera.setParameters(parameters);
@@ -497,7 +503,7 @@ public class DetectorService extends Service {
         stopSelf();
     }
 
-    public native long initializeOpenCL(String kernel, int previewWidth, int previewHeight, int inSampleSize);
+    public native long initializeOpenCL(String kernel, int previewWidth, int previewHeight, int pictureWidth, int pictureHeight);
     public native float computeluminance(long openCLObject, int[] pixels);
     public native int[] luminanceMap(long openCLObject, float lumiThreshold, int[] fullPixels);
     public native void closeOpenCL(long openCLObject);

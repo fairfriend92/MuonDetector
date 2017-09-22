@@ -1,11 +1,10 @@
 <resources>
     <string name="app_name">MuonDetector</string>
-    <string name="preview_parameters">Preview parameters</string>
+    <string name="camera_parameters">Camera parameters</string>
     <string name="preview_fps_range">FPS range</string>
     <string name="start_service_button">Start service</string>
+    <string name="preview_size">Preview size</string>
     <string name="picture_size">Picture size</string>
-    <string name="edit_in_sample_size">Choose an int in [1, 4]</string>
-    <string name="in_sample_size">Sample size</string>
     <string name="calibration_duration">Calibration phase length</string>
     <string name="edit_calibration_duration">Choose a length in sec</string>
     <string name="other_settings">Other settings</string>

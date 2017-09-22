@@ -5,9 +5,9 @@
     android:layout_width="fill_parent"
     android:layout_height="wrap_content">
 
-    <TextView android:id="@+id/network_parameters"
+    <TextView android:id="@+id/camera_parameters"
         style="?android:attr/listSeparatorTextViewStyle"
-        android:text="@string/preview_parameters"
+        android:text="@string/camera_parameters"
         />
 
     <LinearLayout
@@ -32,13 +32,13 @@
         android:layout_weight="1"
         android:layout_width="wrap_content"
         android:layout_height="0dp">
-        <TextView android:id="@+id/picture_size"
+        <TextView android:id="@+id/preview_size"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="@string/picture_size"
+            android:text="@string/preview_size"
             />
         <Spinner
-            android:id="@+id/picture_size_spinner"
+            android:id="@+id/preview_size_spinner"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             />
@@ -49,16 +49,15 @@
         android:layout_weight="1"
         android:layout_width="wrap_content"
         android:layout_height="0dp">
-        <TextView android:id="@+id/in_sample_size"
+        <TextView android:id="@+id/picture_size"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="@string/in_sample_size"
+            android:text="@string/picture_size"
             />
-        <EditText android:id="@+id/edit_in_sample_size"
-            android:inputType="number"
+        <Spinner
+            android:id="@+id/picture_size_spinner"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:hint="@string/edit_in_sample_size"
             />
     </LinearLayout>
 

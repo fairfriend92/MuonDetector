@@ -124,9 +124,9 @@ public class MainActivity extends AppCompatActivity {
     SurfaceView preview;
     SurfaceHolder previewHolder;
     List<int[]> supportedPreviewFpsRange;
-    List<Camera.Size> supportedPictureSizes;
-    Spinner fpsRangeSpinner, pictureSizeSpinner;
-    EditText editSampleSize = null, editCalibrationDuration = null, editCropFactor = null, editNumOfSd = null;
+    List<Camera.Size> supportedPreviewSize, supportedPictureSize;
+    Spinner fpsRangeSpinner, previewSizeSpinner, pictureSizeSpinner;
+    EditText editCalibrationDuration = null, editCropFactor = null, editNumOfSd = null;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -150,11 +150,14 @@ public class MainActivity extends AppCompatActivity {
         Camera tmpCamera = Camera.open(); // Camera object used solely to retrieve info about the camera parameters
         Camera.Parameters parameters = tmpCamera.getParameters();
         supportedPreviewFpsRange = parameters.getSupportedPreviewFpsRange();
-        supportedPictureSizes = parameters.getSupportedPictureSizes();
+        supportedPreviewSize = parameters.getSupportedPreviewSizes();
+        supportedPictureSize = parameters.getSupportedPictureSizes();
         Constants.FRAME_RATE_MIN = supportedPreviewFpsRange.get(0)[0] / 1000;
         Constants.FRAME_RATE = supportedPreviewFpsRange.get(0)[1] / 1000;
-        Constants.PREVIEW_WIDTH = supportedPictureSizes.get(0).width;
-        Constants.PREVIEW_HEIGHT = supportedPictureSizes.get(0).height;
+        Constants.PREVIEW_WIDTH = supportedPreviewSize.get(0).width;
+        Constants.PREVIEW_HEIGHT = supportedPreviewSize.get(0).height;
+        Constants.PICTURE_WIDTH = supportedPictureSize.get(0).width;
+        Constants.PICTURE_HEIGHT = supportedPictureSize.get(0).height;
         tmpCamera.release();
 
         // Populate a spinner with the supported FPS ranges
@@ -166,10 +169,19 @@ public class MainActivity extends AppCompatActivity {
         fpsRangeSpinner.setAdapter(fpsRangesArrayAdapter);
         fpsRangeSpinner.setOnItemSelectedListener(new SpinnerListener());
 
+        // Populate a spinner with the supported preview sizes
+        List<String> previewSizesString = new ArrayList<>(supportedPreviewSize.size());
+        for (int i = 0; i < supportedPreviewSize.size(); i++)
+            previewSizesString.add(supportedPreviewSize.get(i).width + " X " + supportedPreviewSize.get(i).height);
+        previewSizeSpinner = (Spinner) findViewById(R.id.preview_size_spinner);
+        ArrayAdapter<String> previewSizesArrayAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, previewSizesString);
+        previewSizeSpinner.setAdapter(previewSizesArrayAdapter);
+        previewSizeSpinner.setOnItemSelectedListener(new SpinnerListener());
+
         // Populate a spinner with the supported picture sizes
-        List<String> pictureSizesString = new ArrayList<>(supportedPictureSizes.size());
-        for (int i = 0; i < supportedPictureSizes.size(); i++)
-            pictureSizesString.add(supportedPictureSizes.get(i).width + " X " + supportedPictureSizes.get(i).height);
+        List<String> pictureSizesString = new ArrayList<>(supportedPictureSize.size());
+        for (int i = 0; i < supportedPictureSize.size(); i++)
+            pictureSizesString.add(supportedPictureSize.get(i).width + " X " + supportedPictureSize.get(i).height);
         pictureSizeSpinner = (Spinner) findViewById(R.id.picture_size_spinner);
         ArrayAdapter<String> pictureSizesArrayAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, pictureSizesString);
         pictureSizeSpinner.setAdapter(pictureSizesArrayAdapter);
@@ -177,7 +189,6 @@ public class MainActivity extends AppCompatActivity {
 
         /* [End of camera settings] */
 
-        editSampleSize = (EditText) findViewById(R.id.edit_in_sample_size);
         editCalibrationDuration = (EditText) findViewById(R.id.edit_calibration_duration);
         editCropFactor = (EditText) findViewById(R.id.edit_crop_factor);
         editNumOfSd = (EditText) findViewById(R.id.edit_num_of_sd);
@@ -193,19 +204,6 @@ public class MainActivity extends AppCompatActivity {
     String kernel;
 
     public void startService(View view) {
-        // Read from the editable box the sample size used to downscale the picture
-        try {
-            Constants.IN_SAMPLE_SIZE = Integer.parseInt(editSampleSize.getText().toString());
-        } catch (NumberFormatException e) {
-            Log.e("MainActivity", "editSampleSize does not contain a parsable string. Default value (1) is used");
-            Constants.IN_SAMPLE_SIZE = 1;
-        }
-        if (Constants.IN_SAMPLE_SIZE > 4 || Constants.IN_SAMPLE_SIZE == 0) { // If the number is out of range notifies the user and select the deafult value (1 - no downscale)
-            CharSequence text = "Wrong number for sample size. Will use 1.";
-            Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
-            Constants.IN_SAMPLE_SIZE = 1;
-        }
-
         // Read the calibration phase length
         try {
             Constants.CALIBRATION_DURATION = Integer.parseInt(editCalibrationDuration.getText().toString());
@@ -268,9 +266,12 @@ public class MainActivity extends AppCompatActivity {
             if (parent.getId() == fpsRangeSpinner.getId()) {
                 Constants.FRAME_RATE_MIN = supportedPreviewFpsRange.get(position)[0] / 1000;
                 Constants.FRAME_RATE = supportedPreviewFpsRange.get(position)[1] / 1000;
+            } else if (parent.getId() == previewSizeSpinner.getId()) {
+                Constants.PREVIEW_WIDTH = supportedPreviewSize.get(position).width;
+                Constants.PREVIEW_HEIGHT = supportedPreviewSize.get(position).height;
             } else if (parent.getId() == pictureSizeSpinner.getId()) {
-                Constants.PREVIEW_WIDTH = supportedPictureSizes.get(position).width;
-                Constants.PREVIEW_HEIGHT = supportedPictureSizes.get(position).height;
+                Constants.PICTURE_WIDTH = supportedPictureSize.get(position).width;
+                Constants.PICTURE_HEIGHT = supportedPictureSize.get(position).height;
             }
         }
 
@@ -305,7 +306,6 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        DetectorService.legacyCamera.release();
     }
 
     private class RendererRetriever implements Runnable {

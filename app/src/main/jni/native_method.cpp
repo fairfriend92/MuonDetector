@@ -7,10 +7,10 @@ int pixelCount;
 
 
 extern "C" jlong Java_com_example_muondetector_DetectorService_initializeOpenCL (
-        JNIEnv *env, jobject thiz, jstring jKernel, jint jPreviewWidth, jint jPreviewHeight, jint jInSampleSize) {
+        JNIEnv *env, jobject thiz, jstring jKernel, jint jPreviewWidth, jint jPreviewHeight, jint jPictureWidth, jint jPictureHeight) {
 
-    samplePixelCount = jPreviewHeight * jPreviewWidth / (jInSampleSize * jInSampleSize);
-    pixelCount = jPreviewHeight * jPreviewWidth;
+    samplePixelCount = jPreviewHeight * jPreviewWidth;
+    pixelCount = jPictureWidth * jPictureHeight;
     previewBufferSize = samplePixelCount * sizeof(cl_int);
     lumiBufferSize = pixelCount * sizeof(cl_int);
 
