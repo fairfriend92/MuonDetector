@@ -459,8 +459,8 @@ public class DetectorService extends Service {
                     String stackTrace = Log.getStackTraceString(e);
                     Log.e("DetectorService", stackTrace);
                 }
-             }
-         });
+            }
+        });
 
         return START_NOT_STICKY;
     }

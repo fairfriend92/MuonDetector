@@ -150,7 +150,7 @@ public class MainActivity extends AppCompatActivity {
         Camera tmpCamera = Camera.open(); // Camera object used solely to retrieve info about the camera parameters
         Camera.Parameters parameters = tmpCamera.getParameters();
         supportedPreviewFpsRange = parameters.getSupportedPreviewFpsRange();
-        supportedPictureSizes = parameters.getSupportedPictureSizes();
+        supportedPictureSizes = parameters.getSupportedPreviewSizes();
         Constants.FRAME_RATE_MIN = supportedPreviewFpsRange.get(0)[0] / 1000;
         Constants.FRAME_RATE = supportedPreviewFpsRange.get(0)[1] / 1000;
         Constants.PREVIEW_WIDTH = supportedPictureSizes.get(0).width;
@@ -305,7 +305,6 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        DetectorService.legacyCamera.release();
     }
 
     private class RendererRetriever implements Runnable {
@@ -340,4 +339,3 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 }
-

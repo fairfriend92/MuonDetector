@@ -242,7 +242,7 @@ extern "C" jfloat Java_com_example_muondetector_DetectorService_computeluminance
     /* [Output buffers mapping] */
 
     obj->result = (cl_int *)clEnqueueMapBuffer(obj->commandQueue, obj->memoryObjects[1], CL_TRUE, CL_MAP_READ | CL_MAP_WRITE, 0,
-                                                sizeof(cl_int), 0, NULL, NULL, &obj->errorNumber);
+                                               sizeof(cl_int), 0, NULL, NULL, &obj->errorNumber);
     mapMemoryObjectsSuccess &= checkSuccess(obj->errorNumber);
 
     if (!mapMemoryObjectsSuccess)
@@ -306,7 +306,7 @@ extern "C" jintArray Java_com_example_muondetector_DetectorService_luminanceMap(
 
     // Map the buffer which stores the RGB values of the pixels from which the kernel must build the luminance map
     obj->fullPixels = (cl_int *)clEnqueueMapBuffer(obj->commandQueue, obj->memoryObjects[4], CL_TRUE, CL_MAP_WRITE, 0,
-                                               lumiBufferSize, 0, NULL, NULL, &obj->errorNumber);
+                                                   lumiBufferSize, 0, NULL, NULL, &obj->errorNumber);
     mapMemoryObjectsSuccess &= checkSuccess(obj->errorNumber);
 
     // Catch eventual errors
