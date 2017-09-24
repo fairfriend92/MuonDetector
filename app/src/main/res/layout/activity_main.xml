@@ -61,6 +61,24 @@
             />
     </LinearLayout>
 
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_weight="1"
+        android:layout_width="wrap_content"
+        android:layout_height="0dp">
+        <TextView android:id="@+id/in_sample_size"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/in_sample_size"
+            />
+        <EditText android:id="@+id/edit_in_sample_size"
+            android:inputType="number"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:hint="@string/edit_in_sample_size"
+            />
+    </LinearLayout>
+
     <TextView android:id="@+id/other_settings"
         style="?android:attr/listSeparatorTextViewStyle"
         android:text="@string/other_settings"

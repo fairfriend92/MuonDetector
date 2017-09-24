@@ -126,7 +126,7 @@ public class MainActivity extends AppCompatActivity {
     List<int[]> supportedPreviewFpsRange;
     List<Camera.Size> supportedPreviewSize, supportedPictureSize;
     Spinner fpsRangeSpinner, previewSizeSpinner, pictureSizeSpinner;
-    EditText editCalibrationDuration = null, editCropFactor = null, editNumOfSd = null;
+    EditText editCalibrationDuration = null, editCropFactor = null, editNumOfSd = null, editInSampleSize = null;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -192,6 +192,7 @@ public class MainActivity extends AppCompatActivity {
         editCalibrationDuration = (EditText) findViewById(R.id.edit_calibration_duration);
         editCropFactor = (EditText) findViewById(R.id.edit_crop_factor);
         editNumOfSd = (EditText) findViewById(R.id.edit_num_of_sd);
+        editInSampleSize = (EditText) findViewById(R.id.edit_in_sample_size);
 
         // Create the handler thread to load the appropriate kernel based on GPU model
         handlerThread = new HandlerThread("RendererRetrieverThread");
@@ -204,6 +205,19 @@ public class MainActivity extends AppCompatActivity {
     String kernel;
 
     public void startService(View view) {
+        // Read the sample size
+        try {
+            Constants.IN_SAMPLE_SIZE = Integer.parseInt(editInSampleSize.getText().toString());
+        } catch (NumberFormatException e) {
+            Log.e("MainActivity", "editInSampleSize does not contain a parsable string. Default value (1) is used");
+            Constants.IN_SAMPLE_SIZE = 1;
+        }
+        if (Constants.IN_SAMPLE_SIZE == 0 | Constants.IN_SAMPLE_SIZE > 16) {
+            CharSequence text = "Wrong number for sample size. Will use 1.";
+            Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
+            Constants.IN_SAMPLE_SIZE = 1;
+        }
+
         // Read the calibration phase length
         try {
             Constants.CALIBRATION_DURATION = Integer.parseInt(editCalibrationDuration.getText().toString());
