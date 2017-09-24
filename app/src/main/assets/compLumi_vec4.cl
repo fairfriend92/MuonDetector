@@ -32,8 +32,8 @@ int compScaledLumi(float lumi, __global float* restrict lumiThreshold) {
 
   float scaledLumi = lumi * 255.0f;
 
-  float red = lumiThreshold[0] / 3;
-  float yellow = lumiThreshold[0] * 2 / 3;
+  float red = lumiThreshold[0] * 0.44;
+  float yellow = lumiThreshold[0] * 0.88;
 
   if (scaledLumi < red) {
     return (ALPHA & 0xff) << 24 | ((int)((scaledLumi - red) / (yellow - red) * 255.0f) & 0xff) << 16;
