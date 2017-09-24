@@ -105,7 +105,7 @@ extern "C" jlong Java_com_example_muondetector_DetectorService_initializeOpenCL 
      */
 
     bool createMemoryObjectsSuccess = true;
-    obj->numberOfMemoryObjects= 5;
+    obj->numberOfMemoryObjects= 6;
 
     // Ask the OpenCL implementation to allocate buffers to pass data to and from the kernel
     obj->memoryObjects[0] = clCreateBuffer(obj->context, CL_MEM_READ_ONLY| CL_MEM_ALLOC_HOST_PTR,
@@ -126,6 +126,10 @@ extern "C" jlong Java_com_example_muondetector_DetectorService_initializeOpenCL 
 
     obj->memoryObjects[4] = clCreateBuffer(obj->context, CL_MEM_READ_ONLY| CL_MEM_ALLOC_HOST_PTR,
                                            lumiBufferSize, NULL, &obj->errorNumber);
+    createMemoryObjectsSuccess &= checkSuccess(obj->errorNumber);
+
+    obj->memoryObjects[5] = clCreateBuffer(obj->context, CL_MEM_READ_ONLY| CL_MEM_ALLOC_HOST_PTR,
+                                           sizeof(float), NULL, &obj->errorNumber);
     createMemoryObjectsSuccess &= checkSuccess(obj->errorNumber);
 
     if (!createMemoryObjectsSuccess)
@@ -272,7 +276,7 @@ extern "C" jfloat Java_com_example_muondetector_DetectorService_computeluminance
 }
 
 extern "C" jintArray Java_com_example_muondetector_DetectorService_luminanceMap(
-        JNIEnv *env, jobject thiz, jlong jOpenCLObject, jfloat jLumiThreshold, jintArray jPixels) {
+        JNIEnv *env, jobject thiz, jlong jOpenCLObject, jfloat jMaxLumi, jfloat  jMeanLumi, jintArray jPixels) {
 
     struct OpenCLObject *obj;
     obj = (struct OpenCLObject *)jOpenCLObject;
@@ -281,9 +285,13 @@ extern "C" jintArray Java_com_example_muondetector_DetectorService_luminanceMap(
 
     /* [Map the input buffers] */
 
-    // Map the input buffer storing the value of the luminance which serves as a parameter of the non linear transformation which generates the output map
+    // Map the input buffers storing the value of the mean and max luminance serving as a parameter of the transformation which generates the output map
     bool mapMemoryObjectsSuccess = true;
-    obj->lumiThreshold = (cl_float *)clEnqueueMapBuffer(obj->commandQueue, obj->memoryObjects[3], CL_TRUE, CL_MAP_WRITE, 0,
+    obj->maxLuminance = (cl_float *)clEnqueueMapBuffer(obj->commandQueue, obj->memoryObjects[3], CL_TRUE, CL_MAP_WRITE, 0,
+                                                        sizeof(cl_float), 0, NULL, NULL, &obj->errorNumber);
+    mapMemoryObjectsSuccess &= checkSuccess(obj->errorNumber);
+
+    obj->meanLuminance = (cl_float *)clEnqueueMapBuffer(obj->commandQueue, obj->memoryObjects[5], CL_TRUE, CL_MAP_WRITE, 0,
                                                         sizeof(cl_float), 0, NULL, NULL, &obj->errorNumber);
     mapMemoryObjectsSuccess &= checkSuccess(obj->errorNumber);
 
@@ -294,11 +302,18 @@ extern "C" jintArray Java_com_example_muondetector_DetectorService_luminanceMap(
         LOGE("Failed to map buffer");
     }
 
-    // Store the value in the buffer
-    obj->lumiThreshold[0] = (cl_float)jLumiThreshold;
+    // Store the value in the buffers
+    obj->maxLuminance[0] = (cl_float)jMaxLumi;
+    obj->meanLuminance[0] = (cl_float)jMeanLumi;
 
-    // Un-map the memory object
-    if (!checkSuccess(clEnqueueUnmapMemObject(obj->commandQueue, obj->memoryObjects[3], obj->lumiThreshold, 0, NULL, NULL)))
+    // Un-map the memory objects
+    if (!checkSuccess(clEnqueueUnmapMemObject(obj->commandQueue, obj->memoryObjects[3], obj->maxLuminance, 0, NULL, NULL)))
+    {
+        cleanUpOpenCL(obj->context, obj->commandQueue, obj->program, obj->kernels, obj->numberOfKernels, obj->memoryObjects, obj->numberOfMemoryObjects);
+        LOGE("Unmap memory objects failed");
+    }
+
+    if (!checkSuccess(clEnqueueUnmapMemObject(obj->commandQueue, obj->memoryObjects[5], obj->meanLuminance, 0, NULL, NULL)))
     {
         cleanUpOpenCL(obj->context, obj->commandQueue, obj->program, obj->kernels, obj->numberOfKernels, obj->memoryObjects, obj->numberOfMemoryObjects);
         LOGE("Unmap memory objects failed");
@@ -341,6 +356,7 @@ extern "C" jintArray Java_com_example_muondetector_DetectorService_luminanceMap(
     setKernelArgumentSuccess &= checkSuccess(clSetKernelArg(obj->kernels[1], 0, sizeof(cl_mem), &obj->memoryObjects[4]));
     setKernelArgumentSuccess &= checkSuccess(clSetKernelArg(obj->kernels[1], 1, sizeof(cl_mem), &obj->memoryObjects[3]));
     setKernelArgumentSuccess &= checkSuccess(clSetKernelArg(obj->kernels[1], 2, sizeof(cl_mem), &obj->memoryObjects[2]));
+    setKernelArgumentSuccess &= checkSuccess(clSetKernelArg(obj->kernels[1], 3, sizeof(cl_mem), &obj->memoryObjects[5]));
 
     // Catch eventual errors
     if (!setKernelArgumentSuccess)

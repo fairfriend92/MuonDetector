@@ -14,10 +14,10 @@ float computeLumi(int pixel) {
 }
 
 /* Apply a non linear filter to emphasize values above a certain threshold and create a colour map of the luminance */
-int compScaledLumi(float lumi, __global float* restrict lumiThreshold) {
+int compScaledLumi(float lumi, __global float* restrict maxLuminance, __global float* restrict meanLuminance) {
 
   // Non-linear scaling 
-  //float scaledLumi = lumi < lumiThreshold[0] ? CUTOFF * pown(lumi / lumiThreshold[0], 2) : native_sqrt(lumi) * SCALE + CUTOFF;  
+  //float scaledLumi = lumi < maxLuminance[0] ? CUTOFF * pown(lumi / maxLuminance[0], 2) : native_sqrt(lumi) * SCALE + CUTOFF;
 
   // Luminance map uses a gradation of color, from red to white, through yellow
   /*
@@ -31,9 +31,10 @@ int compScaledLumi(float lumi, __global float* restrict lumiThreshold) {
   */
 
   float scaledLumi = lumi * 255.0f;
+  scaledLumi = scaledLumi <= meanLuminance[0] ? 0.0f : log(1.0f + (scaledLumi - meanLuminance[0]));
 
-  float red = lumiThreshold[0] * 0.44;
-  float yellow = lumiThreshold[0] * 0.88;
+  float red = log(1.0f + (maxLuminance[0] * 0.44f - meanLuminance[0]));
+  float yellow = log(1.0f + (maxLuminance[0] * 0.88f - meanLuminance[0]));
 
   if (scaledLumi < red) {
     return (ALPHA & 0xff) << 24 | ((int)((scaledLumi - red) / (yellow - red) * 255.0f) & 0xff) << 16;
@@ -64,15 +65,16 @@ void compute_luminance(__global int* restrict pixels, __global int* restrict res
 
 /* Create a colour map representing the luminance of a given picture */
 __kernel __attribute__((vec_type_hint(int4)))
-void save_luminance_buffer(__global int* restrict pixels, __global float* restrict lumiThreshold, __global int* restrict luminance)
+void save_luminance_buffer(__global int* restrict pixels, __global float* restrict maxLuminance,
+			   __global int* restrict luminance, __global float* restrict meanLuminance)
 {
   int globalId = get_global_id(0);
   int4 pixelsVec = vload4(globalId, pixels);
 
-  int4 lumiVec = (int4)(compScaledLumi(computeLumi(pixelsVec.x), lumiThreshold),
-			compScaledLumi(computeLumi(pixelsVec.y), lumiThreshold),
-			compScaledLumi(computeLumi(pixelsVec.z), lumiThreshold),
-			compScaledLumi(computeLumi(pixelsVec.w), lumiThreshold));
+  int4 lumiVec = (int4)(compScaledLumi(computeLumi(pixelsVec.x), maxLuminance, meanLuminance),
+			compScaledLumi(computeLumi(pixelsVec.y), maxLuminance, meanLuminance),
+			compScaledLumi(computeLumi(pixelsVec.z), maxLuminance, meanLuminance),
+			compScaledLumi(computeLumi(pixelsVec.w), maxLuminance, meanLuminance));
 
   vstore4(lumiVec, globalId, luminance);
   

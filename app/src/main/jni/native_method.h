@@ -24,8 +24,8 @@ struct OpenCLObject {
     int numberOfKernels = 2;
     cl_kernel kernels[2] = {0, 0};
     cl_int errorNumber = 0;
-    int numberOfMemoryObjects = 5;
-    cl_mem memoryObjects[5] = {0, 0, 0, 0, 0};
+    int numberOfMemoryObjects = 6;
+    cl_mem memoryObjects[6] = {0, 0, 0, 0, 0, 0};
     cl_uint intVectorWidth;
 
     // Pointers to the memory buffers
@@ -33,6 +33,7 @@ struct OpenCLObject {
     cl_int *fullPixels;
     cl_int *result;
     cl_int *luminance;
-    cl_float *lumiThreshold;
+    cl_float *meanLuminance;
+    cl_float *maxLuminance;
 };
 

@@ -5,7 +5,6 @@ import android.app.Service;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.graphics.BitmapRegionDecoder;
 import android.graphics.ImageFormat;
 import android.graphics.Rect;
 import android.graphics.YuvImage;
@@ -78,7 +77,7 @@ public class DetectorService extends Service {
     private NotificationCompat.Builder notificationBuilder;
     private boolean notificationShowed = false;
     private long openCLObject = 0;
-    private double meanLuminance = 0, meanSquaredLumi = 0, standardDeviation = 0;
+    private double meanMaxLumi = 0, meanSquaredMaxLumi = 0, standardDeviation = 0;
     private int samplesTaken = 0; // Times the luminance has been sampled during the setup phase
 
 
@@ -140,21 +139,21 @@ public class DetectorService extends Service {
 
             // During the calibration phase compute the average maximum luminance (defined as the greatest value of the luminance for one picture instance)
             if (samplesTaken <= Constants.NUM_OF_SAMPLES) { // If the calibration phase has not endend...
-                double sampledLumi = computeluminance(openCLObject, pixels);
-                meanLuminance += sampledLumi;
-                meanSquaredLumi += sampledLumi * sampledLumi;
+                double maxLumi = computeluminance(openCLObject, pixels);
+                meanMaxLumi += maxLumi;
+                meanSquaredMaxLumi += maxLumi * maxLumi;
                 samplesTaken++;
                 yuvData = null;
             } else if (samplesTaken == Constants.NUM_OF_SAMPLES + 1) { // If the calibration phase has just ended...
-                meanLuminance /= Constants.NUM_OF_SAMPLES;
-                meanSquaredLumi /= Constants.NUM_OF_SAMPLES;
-                standardDeviation = Math.sqrt(Math.abs(meanSquaredLumi - meanLuminance * meanLuminance) * Constants.NUM_OF_SAMPLES / (Constants.NUM_OF_SAMPLES - 1));
+                meanMaxLumi /= Constants.NUM_OF_SAMPLES;
+                meanSquaredMaxLumi /= Constants.NUM_OF_SAMPLES;
+                standardDeviation = Math.sqrt(Math.abs(meanSquaredMaxLumi - meanMaxLumi * meanMaxLumi) * Constants.NUM_OF_SAMPLES / (Constants.NUM_OF_SAMPLES - 1));
                 samplesTaken++;
             } else { // When the calibration is done...
-                float luminance = computeluminance(openCLObject, pixels);
-                if (luminance >= meanLuminance + Constants.NUM_OF_SD * standardDeviation) {
+                float maxLumi = computeluminance(openCLObject, pixels);
+                if (maxLumi >= meanMaxLumi + Constants.NUM_OF_SD * standardDeviation) {
                     try {
-                        jpegCreatorExecutor.execute(new jpegCreator(luminance, yuvData));
+                        jpegCreatorExecutor.execute(new jpegCreator(maxLumi, yuvData));
                     } catch (RejectedExecutionException e) {
                         String stackTrace = Log.getStackTraceString(e);
                         Log.e("DetectorService", stackTrace);
@@ -176,11 +175,11 @@ public class DetectorService extends Service {
      */
 
     private class jpegCreator implements Runnable {
-        private float luminance;
+        private float maxLumi;
         private byte[] yuvData;
 
-        jpegCreator(float luminance, byte[] yuvData) {
-            this.luminance = luminance;
+        jpegCreator(float maxLumi, byte[] yuvData) {
+            this.maxLumi = maxLumi;
             this.yuvData = yuvData;
         }
 
@@ -214,20 +213,17 @@ public class DetectorService extends Service {
                 highResBitmap.getPixels(pixels, 0, Constants.CROP_WIDTH, 0, 0, Constants.CROP_WIDTH, Constants.CROP_HEIGHT);
 
                 // Create the bitmap storing the luminance map
-                float lumiThreshold = luminance;
+                // TODO: Compute meanLumi of THIS picture?
                 Bitmap luminanceBitmap =
-                        Bitmap.createBitmap(luminanceMap(openCLObject, lumiThreshold, pixels), Constants.CROP_WIDTH, Constants.CROP_HEIGHT, Bitmap.Config.ARGB_8888);
+                        Bitmap.createBitmap(luminanceMap(openCLObject, maxLumi, (float) meanMaxLumi, pixels), Constants.CROP_WIDTH, Constants.CROP_HEIGHT, Bitmap.Config.ARGB_8888);
 
                 // Create the file that will store the image
-                File imageFile = createImageFile(luminance);
+                File imageFile = createImageFile(maxLumi);
                 FileOutputStream fileOutputStream = new FileOutputStream(imageFile);
 
                 // Store the luminance map in the file
                 luminanceBitmap.compress(Bitmap.CompressFormat.JPEG, 100, fileOutputStream);
                 fileOutputStream.close();
-
-                highResBitmap.recycle();
-                highResBitmap = null;
             } catch (IOException e) {
                 String stackTrace = Log.getStackTraceString(e);
                 Log.e("DetectorService", stackTrace);
@@ -259,7 +255,7 @@ public class DetectorService extends Service {
             if (++frame == Constants.FRAME_RATE_MIN) {
                 float timeMs = (System.nanoTime() - time) / 1000000; // Time in ms since the last time the average frame rate was updated
                 float framerate = (Constants.FRAME_RATE_MIN * 1000) / timeMs;
-                Log.d("DetectorService", "Average frame rate " + framerate + " mean lumi " + meanLuminance + " standard dev " + standardDeviation);
+                Log.d("DetectorService", "Average frame rate " + framerate + " mean lumi " + meanMaxLumi + " standard dev " + standardDeviation);
                 // TODO: Give the option to chose the threshold from the main menu
                 /*
                 if (framerate < 5) { // If the framerate is below a certain threshold try to empty the buffer of the GPU scheduler to force hardware acceleration
@@ -501,6 +497,6 @@ public class DetectorService extends Service {
 
     public native long initializeOpenCL(String kernel, int previewWidth, int previewHeight, int inSampleSize);
     public native float computeluminance(long openCLObject, int[] pixels);
-    public native int[] luminanceMap(long openCLObject, float lumiThreshold, int[] fullPixels);
+    public native int[] luminanceMap(long openCLObject, float maxLumi, float meanLumi, int[] fullPixels);
     public native void closeOpenCL(long openCLObject);
 }
