@@ -426,7 +426,6 @@ public class DetectorService extends Service {
                     if (parametersString.contains("iso-speed")) {
                         parameters.set("iso-speed", 1600);
                     }
-                    /*
                     parameters.set("saturation", "high");
                     parameters.set("brightness", "high");
                     parameters.setAntibanding(Camera.Parameters.ANTIBANDING_OFF);
@@ -437,7 +436,6 @@ public class DetectorService extends Service {
                     parameters.setJpegQuality(100);
                     parameters.setAutoExposureLock(true);
                     parameters.setAutoWhiteBalanceLock(true);
-                    */
                     parameters.setPreviewSize(Constants.PREVIEW_WIDTH, Constants.PREVIEW_HEIGHT);
                     parameters.setPreviewFpsRange(Constants.FRAME_RATE_MIN * 1000, Constants.FRAME_RATE * 1000);
                     frontBuffer = new byte[Constants.PREVIEW_IMAGE_SIZE];
