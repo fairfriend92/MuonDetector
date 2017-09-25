@@ -138,6 +138,19 @@
             />
     </LinearLayout>
 
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_weight="1"
+        android:layout_width="wrap_content"
+        android:layout_height="0dp">
+        <CheckBox android:id="@+id/checkbox_hw_acc"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/checkbox_hw_acc"
+            android:onClick="onCheckboxClicked"/>
+    </LinearLayout>
+
+
     <Button
         android:layout_weight="1"
         android:layout_width="wrap_content"

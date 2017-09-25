@@ -20,6 +20,7 @@ class Constants {
     static int IN_SAMPLE_SIZE = 1;
     static int SAMPLED_PIC_WIDTH = 0;
     static int SAMPLED_PIC_HEIGHT = 0;
+    static boolean USE_HW_ACC = false;
 
     static  void computeAdditionalValues() {
         CROP_PICTURE_WIDTH = (int)(PICTURE_WIDTH * CROP_FACTOR / 100);

@@ -1,17 +1,17 @@
 #include "native_method.h"
 
-size_t previewBufferSize;
+size_t lowResBufferSize;
 int samplePixelCount;
 size_t lumiBufferSize;
 int pixelCount;
 
 
 extern "C" jlong Java_com_example_muondetector_DetectorService_initializeOpenCL (
-        JNIEnv *env, jobject thiz, jstring jKernel, jint jPreviewWidth, jint jPreviewHeight, jint jPictureWidth, jint jPictureHeight) {
+        JNIEnv *env, jobject thiz, jstring jKernel, jint jSampledPictureWidth, jint jSampledPictureHeight, jint jPictureWidth, jint jPictureHeight) {
 
-    samplePixelCount = jPreviewHeight * jPreviewWidth;
+    samplePixelCount = jSampledPictureHeight * jSampledPictureWidth;
     pixelCount = jPictureWidth * jPictureHeight;
-    previewBufferSize = samplePixelCount * sizeof(cl_int);
+    lowResBufferSize = samplePixelCount * sizeof(cl_int);
     lumiBufferSize = pixelCount * sizeof(cl_int);
 
     struct OpenCLObject *obj;
@@ -109,7 +109,7 @@ extern "C" jlong Java_com_example_muondetector_DetectorService_initializeOpenCL 
 
     // Ask the OpenCL implementation to allocate buffers to pass data to and from the kernel
     obj->memoryObjects[0] = clCreateBuffer(obj->context, CL_MEM_READ_ONLY| CL_MEM_ALLOC_HOST_PTR,
-                                           previewBufferSize, NULL, &obj->errorNumber);
+                                           lowResBufferSize, NULL, &obj->errorNumber);
     createMemoryObjectsSuccess &= checkSuccess(obj->errorNumber);
 
     obj->memoryObjects[1] = clCreateBuffer(obj->context, CL_MEM_READ_WRITE| CL_MEM_ALLOC_HOST_PTR,
@@ -170,7 +170,7 @@ extern "C" jfloat Java_com_example_muondetector_DetectorService_computeluminance
     // Map the buffer
     bool mapMemoryObjectsSuccess = true;
     obj->pixels = (cl_int *)clEnqueueMapBuffer(obj->commandQueue, obj->memoryObjects[0], CL_TRUE, CL_MAP_WRITE, 0,
-                                               previewBufferSize, 0, NULL, NULL, &obj->errorNumber);
+                                               lowResBufferSize, 0, NULL, NULL, &obj->errorNumber);
     mapMemoryObjectsSuccess &= checkSuccess(obj->errorNumber);
 
     // Catch eventual errors

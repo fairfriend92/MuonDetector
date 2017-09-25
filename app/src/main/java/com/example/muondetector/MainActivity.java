@@ -19,6 +19,7 @@ import android.view.SurfaceView;
 import android.view.View;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.Spinner;
 import android.widget.Toast;
@@ -202,6 +203,22 @@ public class MainActivity extends AppCompatActivity {
         handler.post(new RendererRetriever());
     }
 
+    /*
+     * Called when the checkbox is clicked
+     */
+
+    public void onCheckboxClicked(View view) {
+        // Is the view now checked?
+        boolean checked = ((CheckBox) view).isChecked();
+
+        // Check which checkbox was clicked
+        switch(view.getId()) {
+            case R.id.checkbox_hw_acc:
+                Constants.USE_HW_ACC = checked;
+                break;
+        }
+    }
+
     String kernel;
 
     public void startService(View view) {
@@ -336,6 +353,8 @@ public class MainActivity extends AppCompatActivity {
 
             // Get the GPU model
             String renderer = prefs.getString("RENDERER", null);
+            if (renderer == null)
+                Log.e("MainActivity", "RENDERER NULL");
             assert renderer != null;
 
             // Load the appropriate OpenCL kernel based on GPU model

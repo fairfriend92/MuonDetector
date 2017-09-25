@@ -14,4 +14,5 @@
     <string name="edit_crop_factor">% of image to process</string>
     <string name="num_of_sd">Standard deviations</string>
     <string name="edit_num_of_sd">How many? int in [1, 10]</string>
+    <string name="checkbox_hw_acc">Use hardware acceleration</string>
 </resources>
