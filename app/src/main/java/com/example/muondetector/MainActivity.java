@@ -60,6 +60,26 @@ public class MainActivity extends AppCompatActivity {
 
             // Set the background frame color
             GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+
+            // Get the GPU model
+            String renderer = prefs.getString("RENDERER", null);
+            if (renderer == null)
+                Log.e("MainActivity", "RENDERER NULL");
+            assert renderer != null;
+
+            // Load the appropriate OpenCL kernel based on GPU model
+            switch (renderer) {
+                case "Mali-T880":
+                case "Mali-T720":
+                    kernel = loadKernelFromAsset(getInputStream("compLumi_vec4.cl"));
+                    break;
+                default:
+                    kernel = loadKernelFromAsset(getInputStream("compLumi_vec4.cl"));
+                    break;
+            }
+
+            // Load the appropriate OpenCL library based on the GPU vendor
+            loadGLLibrary();
         }
 
         @Override
@@ -135,11 +155,20 @@ public class MainActivity extends AppCompatActivity {
 
         prefs = this.getSharedPreferences("GPUinfo", Context.MODE_PRIVATE);
 
-        // OpenGL surface view
-        MyGLSurfaceView mGlSurfaceView = new MyGLSurfaceView(this);
+        // Create the handler thread to load the appropriate kernel based on GPU model
+        handlerThread = new HandlerThread("RendererRetrieverThread");
+        handlerThread.start();
+        Looper looper = handlerThread.getLooper();
+        Handler handler = new Handler(looper);
+        handler.post(new RendererRetriever());
 
-        // Set on display the OpenGL surface view in order to call the OpenGL renderer and retrieve the GPU info
-        setContentView(mGlSurfaceView);
+        // The OpenGL context needs time to be initialized, therefore wait before retrieving the renderer
+        try {
+            Thread.sleep(3000);
+        } catch (InterruptedException e) {
+            String stackTrace = Log.getStackTraceString(e);
+            Log.e("MainActivity", stackTrace);
+        }
 
         // Display the main view
         setContentView(R.layout.activity_main);
@@ -194,13 +223,6 @@ public class MainActivity extends AppCompatActivity {
         editCropFactor = (EditText) findViewById(R.id.edit_crop_factor);
         editNumOfSd = (EditText) findViewById(R.id.edit_num_of_sd);
         editInSampleSize = (EditText) findViewById(R.id.edit_in_sample_size);
-
-        // Create the handler thread to load the appropriate kernel based on GPU model
-        handlerThread = new HandlerThread("RendererRetrieverThread");
-        handlerThread.start();
-        Looper looper = handlerThread.getLooper();
-        Handler handler = new Handler(looper);
-        handler.post(new RendererRetriever());
     }
 
     /*
@@ -343,33 +365,11 @@ public class MainActivity extends AppCompatActivity {
 
         @Override
         public void run() {
-            // The OpenGL context needs time to be initialized, therefore wait before retrieving the renderer
-            try {
-                Thread.sleep(1000);
-            } catch (InterruptedException e) {
-                String stackTrace = Log.getStackTraceString(e);
-                Log.e("MainActivity", stackTrace);
-            }
+            // OpenGL surface view
+            MyGLSurfaceView mGlSurfaceView = new MyGLSurfaceView(MainActivity.this);
 
-            // Get the GPU model
-            String renderer = prefs.getString("RENDERER", null);
-            if (renderer == null)
-                Log.e("MainActivity", "RENDERER NULL");
-            assert renderer != null;
-
-            // Load the appropriate OpenCL kernel based on GPU model
-            switch (renderer) {
-                case "Mali-T880":
-                case "Mali-T720":
-                    kernel = loadKernelFromAsset(getInputStream("compLumi_vec4.cl"));
-                    break;
-                default:
-                    kernel = loadKernelFromAsset(getInputStream("compLumi_vec4.cl"));
-                    break;
-            }
-
-            // Load the appropriate OpenCL library based on the GPU vendor
-            loadGLLibrary();
+            // Set on display the OpenGL surface view in order to call the OpenGL renderer and retrieve the GPU info
+            setContentView(mGlSurfaceView);
         }
     }
 }
