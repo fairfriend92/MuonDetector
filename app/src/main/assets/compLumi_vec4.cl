@@ -40,7 +40,7 @@ int compScaledLumi(float lumi, __global float* restrict lumiThreshold) {
   } else if (scaledLumi < yellow) {
     return (ALPHA & 0xff) << 24 | (255 & 0xff) << 16 | ((int)((scaledLumi - red) / (yellow - red) * 255.0f) & 0xff) << 8;
   } else {
-    return (ALPHA & 0xff) << 24 | (255 & 0xff) << 16 | (255 & 0xff) << 8 | ((int)((scaledLumi - yellow) / (255.0f - yellow) * 255.0f) & 0xff);
+    return (ALPHA & 0xff) << 24 | (255 & 0xff) << 16 | (255 & 0xff) << 8 | ((int)((scaledLumi - yellow) / (lumiThreshold[0] - yellow) * 255.0f) & 0xff);
   } 
 }
 
