@@ -319,7 +319,7 @@ public class DetectorService extends Service {
                 else if (lumi < yellow)
                     luminaceMapData[index] = (255 & 0xff) << 24 | (255 & 0xff) << 16 | ((int)((lumi - red) / (yellow - red) * 255.0f) & 0xff) << 8;
                 else
-                    luminaceMapData[index] = (255 & 0xff) << 24 | (255 & 0xff) << 16 | (255 & 0xff) << 8 | ((int)((lumi - yellow) / (255.0f - yellow) * 255.0f) & 0xff);
+                    luminaceMapData[index] = (255 & 0xff) << 24 | (255 & 0xff) << 16 | (255 & 0xff) << 8 | ((int)((lumi - yellow) / (maxLumi - yellow) * 255.0f) & 0xff);
 
                 index++;
             }

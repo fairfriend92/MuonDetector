@@ -7,6 +7,7 @@ import android.content.pm.ActivityInfo;
 import android.hardware.Camera;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
+import android.os.CountDownTimer;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
@@ -140,7 +141,78 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private HandlerThread handlerThread;
+    private class MyCountdown extends CountDownTimer {
+
+        Context context;
+
+        MyCountdown (long millisInFuture, long countDownInterval, Context context) {
+            super (millisInFuture, countDownInterval);
+            this.context = context;
+        }
+
+        @Override
+        public void onTick(long millisUntilFinished) {
+
+        }
+
+        @Override
+        public void onFinish() {
+            // Display the main view
+            setContentView(R.layout.activity_main);
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+
+        /* Camera settings */
+
+            // Check the camera settings that can be changed
+            Camera tmpCamera = Camera.open(); // Camera object used solely to retrieve info about the camera parameters
+            Camera.Parameters parameters = tmpCamera.getParameters();
+            supportedPreviewFpsRange = parameters.getSupportedPreviewFpsRange();
+            supportedPreviewSize = parameters.getSupportedPreviewSizes();
+            supportedPictureSize = parameters.getSupportedPictureSizes();
+            Constants.FRAME_RATE_MIN = supportedPreviewFpsRange.get(0)[0] / 1000;
+            Constants.FRAME_RATE = supportedPreviewFpsRange.get(0)[1] / 1000;
+            Constants.PREVIEW_WIDTH = supportedPreviewSize.get(0).width;
+            Constants.PREVIEW_HEIGHT = supportedPreviewSize.get(0).height;
+            Constants.PICTURE_WIDTH = supportedPictureSize.get(0).width;
+            Constants.PICTURE_HEIGHT = supportedPictureSize.get(0).height;
+            tmpCamera.release();
+
+            // Populate a spinner with the supported FPS ranges
+            List<String> fpsRangeString = new ArrayList<>(supportedPreviewFpsRange.size());
+            for (int i = 0; i < supportedPreviewFpsRange.size(); i++)
+                fpsRangeString.add("(" + supportedPreviewFpsRange.get(i)[0] + ", " + supportedPreviewFpsRange.get(i)[1] + ")");
+            fpsRangeSpinner = (Spinner) findViewById(R.id.preview_fps_range_spinner);
+            ArrayAdapter<String> fpsRangesArrayAdapter = new ArrayAdapter<>(context, android.R.layout.simple_spinner_item, fpsRangeString);
+            fpsRangeSpinner.setAdapter(fpsRangesArrayAdapter);
+            fpsRangeSpinner.setOnItemSelectedListener(new SpinnerListener());
+
+            // Populate a spinner with the supported preview sizes
+            List<String> previewSizesString = new ArrayList<>(supportedPreviewSize.size());
+            for (int i = 0; i < supportedPreviewSize.size(); i++)
+                previewSizesString.add(supportedPreviewSize.get(i).width + " X " + supportedPreviewSize.get(i).height);
+            previewSizeSpinner = (Spinner) findViewById(R.id.preview_size_spinner);
+            ArrayAdapter<String> previewSizesArrayAdapter = new ArrayAdapter<>(context, android.R.layout.simple_spinner_item, previewSizesString);
+            previewSizeSpinner.setAdapter(previewSizesArrayAdapter);
+            previewSizeSpinner.setOnItemSelectedListener(new SpinnerListener());
+
+            // Populate a spinner with the supported picture sizes
+            List<String> pictureSizesString = new ArrayList<>(supportedPictureSize.size());
+            for (int i = 0; i < supportedPictureSize.size(); i++)
+                pictureSizesString.add(supportedPictureSize.get(i).width + " X " + supportedPictureSize.get(i).height);
+            pictureSizeSpinner = (Spinner) findViewById(R.id.picture_size_spinner);
+            ArrayAdapter<String> pictureSizesArrayAdapter = new ArrayAdapter<>(context, android.R.layout.simple_spinner_item, pictureSizesString);
+            pictureSizeSpinner.setAdapter(pictureSizesArrayAdapter);
+            pictureSizeSpinner.setOnItemSelectedListener(new SpinnerListener());
+
+        /* [End of camera settings] */
+
+            editCalibrationDuration = (EditText) findViewById(R.id.edit_calibration_duration);
+            editCropFactor = (EditText) findViewById(R.id.edit_crop_factor);
+            editNumOfSd = (EditText) findViewById(R.id.edit_num_of_sd);
+            editInSampleSize = (EditText) findViewById(R.id.edit_in_sample_size);
+        }
+    }
+
 
     SurfaceView preview;
     SurfaceHolder previewHolder;
@@ -155,74 +227,14 @@ public class MainActivity extends AppCompatActivity {
 
         prefs = this.getSharedPreferences("GPUinfo", Context.MODE_PRIVATE);
 
-        // Create the handler thread to load the appropriate kernel based on GPU model
-        handlerThread = new HandlerThread("RendererRetrieverThread");
-        handlerThread.start();
-        Looper looper = handlerThread.getLooper();
-        Handler handler = new Handler(looper);
-        handler.post(new RendererRetriever());
+        // OpenGL surface view
+        MyGLSurfaceView mGlSurfaceView = new MyGLSurfaceView(MainActivity.this);
 
-        // The OpenGL context needs time to be initialized, therefore wait before retrieving the renderer
-        try {
-            Thread.sleep(3000);
-        } catch (InterruptedException e) {
-            String stackTrace = Log.getStackTraceString(e);
-            Log.e("MainActivity", stackTrace);
-        }
+        // Set on display the OpenGL surface view in order to call the OpenGL renderer and retrieve the GPU info
+        setContentView(mGlSurfaceView);
 
-        // Display the main view
-        setContentView(R.layout.activity_main);
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-
-        /* Camera settings */
-
-        // Check the camera settings that can be changed
-        Camera tmpCamera = Camera.open(); // Camera object used solely to retrieve info about the camera parameters
-        Camera.Parameters parameters = tmpCamera.getParameters();
-        supportedPreviewFpsRange = parameters.getSupportedPreviewFpsRange();
-        supportedPreviewSize = parameters.getSupportedPreviewSizes();
-        supportedPictureSize = parameters.getSupportedPictureSizes();
-        Constants.FRAME_RATE_MIN = supportedPreviewFpsRange.get(0)[0] / 1000;
-        Constants.FRAME_RATE = supportedPreviewFpsRange.get(0)[1] / 1000;
-        Constants.PREVIEW_WIDTH = supportedPreviewSize.get(0).width;
-        Constants.PREVIEW_HEIGHT = supportedPreviewSize.get(0).height;
-        Constants.PICTURE_WIDTH = supportedPictureSize.get(0).width;
-        Constants.PICTURE_HEIGHT = supportedPictureSize.get(0).height;
-        tmpCamera.release();
-
-        // Populate a spinner with the supported FPS ranges
-        List<String> fpsRangeString = new ArrayList<>(supportedPreviewFpsRange.size());
-        for (int i = 0; i < supportedPreviewFpsRange.size(); i++)
-            fpsRangeString.add("(" + supportedPreviewFpsRange.get(i)[0] + ", " + supportedPreviewFpsRange.get(i)[1] + ")");
-        fpsRangeSpinner = (Spinner) findViewById(R.id.preview_fps_range_spinner);
-        ArrayAdapter<String> fpsRangesArrayAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, fpsRangeString);
-        fpsRangeSpinner.setAdapter(fpsRangesArrayAdapter);
-        fpsRangeSpinner.setOnItemSelectedListener(new SpinnerListener());
-
-        // Populate a spinner with the supported preview sizes
-        List<String> previewSizesString = new ArrayList<>(supportedPreviewSize.size());
-        for (int i = 0; i < supportedPreviewSize.size(); i++)
-            previewSizesString.add(supportedPreviewSize.get(i).width + " X " + supportedPreviewSize.get(i).height);
-        previewSizeSpinner = (Spinner) findViewById(R.id.preview_size_spinner);
-        ArrayAdapter<String> previewSizesArrayAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, previewSizesString);
-        previewSizeSpinner.setAdapter(previewSizesArrayAdapter);
-        previewSizeSpinner.setOnItemSelectedListener(new SpinnerListener());
-
-        // Populate a spinner with the supported picture sizes
-        List<String> pictureSizesString = new ArrayList<>(supportedPictureSize.size());
-        for (int i = 0; i < supportedPictureSize.size(); i++)
-            pictureSizesString.add(supportedPictureSize.get(i).width + " X " + supportedPictureSize.get(i).height);
-        pictureSizeSpinner = (Spinner) findViewById(R.id.picture_size_spinner);
-        ArrayAdapter<String> pictureSizesArrayAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, pictureSizesString);
-        pictureSizeSpinner.setAdapter(pictureSizesArrayAdapter);
-        pictureSizeSpinner.setOnItemSelectedListener(new SpinnerListener());
-
-        /* [End of camera settings] */
-
-        editCalibrationDuration = (EditText) findViewById(R.id.edit_calibration_duration);
-        editCropFactor = (EditText) findViewById(R.id.edit_crop_factor);
-        editNumOfSd = (EditText) findViewById(R.id.edit_num_of_sd);
-        editInSampleSize = (EditText) findViewById(R.id.edit_in_sample_size);
+        MyCountdown myCountdown = new MyCountdown(2000, 1000, this);
+        myCountdown.start();
     }
 
     /*
@@ -300,8 +312,6 @@ public class MainActivity extends AppCompatActivity {
         previewHolder = preview.getHolder();
         previewHolder.addCallback(DetectorService.surfaceHolderCallback);
 
-        handlerThread.quit();
-
         // Create the intent for the main service and bundle the string containing the OpenCL kernel
         Intent detectorIntent = new Intent(MainActivity.this, DetectorService.class);
         detectorIntent.putExtra("Kernel", kernel);
@@ -361,16 +371,5 @@ public class MainActivity extends AppCompatActivity {
         super.onDestroy();
     }
 
-    private class RendererRetriever implements Runnable {
-
-        @Override
-        public void run() {
-            // OpenGL surface view
-            MyGLSurfaceView mGlSurfaceView = new MyGLSurfaceView(MainActivity.this);
-
-            // Set on display the OpenGL surface view in order to call the OpenGL renderer and retrieve the GPU info
-            setContentView(mGlSurfaceView);
-        }
-    }
 }
 
