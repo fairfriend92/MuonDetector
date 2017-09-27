@@ -5,6 +5,7 @@ import android.app.Service;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Color;
 import android.graphics.ImageFormat;
 import android.graphics.Rect;
 import android.graphics.YuvImage;
@@ -153,7 +154,7 @@ public class DetectorService extends Service {
                 float maxLumi = computeluminance(openCLObject, pixels);
                 if (maxLumi >= meanMaxLumi + Constants.NUM_OF_SD * standardDeviation) {
                     try {
-                        jpegCreatorExecutor.execute(new jpegCreator(maxLumi, yuvData));
+                        jpegCreatorExecutor.execute(new jpegCreator(maxLumi, yuvData, pixels));
                     } catch (RejectedExecutionException e) {
                         String stackTrace = Log.getStackTraceString(e);
                         Log.e("DetectorService", stackTrace);
@@ -161,9 +162,6 @@ public class DetectorService extends Service {
                 }
             }
             /* [End of if] */
-
-            lowResBitmap.recycle();
-            lowResBitmap = null;
 
         }
         /* [End of run()] */
@@ -175,12 +173,14 @@ public class DetectorService extends Service {
      */
 
     private class jpegCreator implements Runnable {
+        private int[] lowResPicPixels;
         private float maxLumi;
         private byte[] yuvData;
 
-        jpegCreator(float maxLumi, byte[] yuvData) {
+        jpegCreator(float maxLumi, byte[] yuvData, int[] lowResPicPixels) {
             this.maxLumi = maxLumi;
             this.yuvData = yuvData;
+            this.lowResPicPixels = lowResPicPixels;
         }
 
         @Override
@@ -212,10 +212,25 @@ public class DetectorService extends Service {
                 // Save in the array the RGB values
                 highResBitmap.getPixels(pixels, 0, Constants.CROP_WIDTH, 0, 0, Constants.CROP_WIDTH, Constants.CROP_HEIGHT);
 
+                // Compute the average luminance from the low res version of the picture;
+                // TODO: Move to separate openCL kernel
+                float meanLumi = 0.0f;
+                for (int pixel : lowResPicPixels) {
+                    float r = Color.red(pixel) / 255.0f;
+                    float g = Color.green(pixel) / 255.0f;
+                    float b = Color.blue(pixel) / 255.0f;
+
+                    r = r * (r * (r * 0.305306011f + 0.682171111f) + 0.012522878f); // Linear approximation of the transform that linearizes color in the sRGB space
+                    g = g * (g * (g * 0.305306011f + 0.682171111f) + 0.012522878f);
+                    b = b * (b * (b * 0.305306011f + 0.682171111f) + 0.012522878f);
+
+                    meanLumi += 0.2126f * r + 0.7152f * g + 0.0722f * b;
+                }
+                meanLumi /= pixels.length;
+
                 // Create the bitmap storing the luminance map
-                // TODO: Compute meanLumi of THIS picture?
                 Bitmap luminanceBitmap =
-                        Bitmap.createBitmap(luminanceMap(openCLObject, maxLumi, (float) meanMaxLumi, pixels), Constants.CROP_WIDTH, Constants.CROP_HEIGHT, Bitmap.Config.ARGB_8888);
+                        Bitmap.createBitmap(luminanceMap(openCLObject, maxLumi, meanLumi, pixels), Constants.CROP_WIDTH, Constants.CROP_HEIGHT, Bitmap.Config.ARGB_8888);
 
                 // Create the file that will store the image
                 File imageFile = createImageFile(maxLumi);
@@ -237,9 +252,6 @@ public class DetectorService extends Service {
 
     private int frame = 0;
     private long time = 0;
-    private byte[] frontBuffer;
-    private byte[] backBuffer;
-    private String bufferUsed = "front";
 
     private Camera.PreviewCallback previewCallback = new Camera.PreviewCallback() {
         @Override
@@ -256,32 +268,9 @@ public class DetectorService extends Service {
                 float timeMs = (System.nanoTime() - time) / 1000000; // Time in ms since the last time the average frame rate was updated
                 float framerate = (Constants.FRAME_RATE_MIN * 1000) / timeMs;
                 Log.d("DetectorService", "Average frame rate " + framerate + " mean lumi " + meanMaxLumi + " standard dev " + standardDeviation);
-                // TODO: Give the option to chose the threshold from the main menu
-                /*
-                if (framerate < 5) { // If the framerate is below a certain threshold try to empty the buffer of the GPU scheduler to force hardware acceleration
-                    Log.e("DetectorService", "Framerate below minimum: clearing GPUscheduler buffer");
-                    GPUschedulerQueue.clear();
-                }
-                */
                 time = System.nanoTime();
                 frame = 0;
             }
-
-            /*
-            // Swap the buffers that store the preview frame
-            switch (bufferUsed) {
-                case "front":
-                    legacyCamera.addCallbackBuffer(backBuffer);
-                    bufferUsed = "back";
-                    break;
-                case "back":
-                    legacyCamera.addCallbackBuffer(frontBuffer);
-                    bufferUsed = "front";
-                    break;
-                default:
-                    break;
-            }
-            */
         }
     };
 
@@ -319,7 +308,6 @@ public class DetectorService extends Service {
                     try {
                         legacyCamera.stopPreview();
                         legacyCamera.setPreviewDisplay(surfaceHolder);
-                        //legacyCamera.setPreviewCallbackWithBuffer(previewCallback);
                         legacyCamera.setPreviewCallback(previewCallback);
                         legacyCamera.startPreview();
                     } catch (IOException e) {
@@ -438,11 +426,8 @@ public class DetectorService extends Service {
                     parameters.setAutoWhiteBalanceLock(true);
                     parameters.setPreviewSize(Constants.PREVIEW_WIDTH, Constants.PREVIEW_HEIGHT);
                     parameters.setPreviewFpsRange(Constants.FRAME_RATE_MIN * 1000, Constants.FRAME_RATE * 1000);
-                    frontBuffer = new byte[Constants.PREVIEW_IMAGE_SIZE];
-                    backBuffer = new byte[Constants.PREVIEW_IMAGE_SIZE];
                     legacyCamera.setParameters(parameters);
                     legacyCamera.setDisplayOrientation(90);
-                    //legacyCamera.addCallbackBuffer(frontBuffer);
                     try {
                         synchronized (captureThreadLock) {
                             captureThreadLock.notify();

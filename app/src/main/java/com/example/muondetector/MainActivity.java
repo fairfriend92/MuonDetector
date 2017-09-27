@@ -7,6 +7,7 @@ import android.content.pm.ActivityInfo;
 import android.hardware.Camera;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
+import android.os.CountDownTimer;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
@@ -59,6 +60,24 @@ public class MainActivity extends AppCompatActivity {
 
             // Set the background frame color
             GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+
+            // Get the GPU model
+            String renderer = prefs.getString("RENDERER", null);
+            assert renderer != null;
+
+            // Load the appropriate OpenCL kernel based on GPU model
+            switch (renderer) {
+                case "Mali-T880":
+                case "Mali-T720":
+                    kernel = loadKernelFromAsset(getInputStream("compLumi_vec4.cl"));
+                    break;
+                default:
+                    kernel = loadKernelFromAsset(getInputStream("compLumi_vec4.cl"));
+                    break;
+            }
+
+            // Load the appropriate OpenCL library based on the GPU vendor
+            loadGLLibrary();
         }
 
         @Override
@@ -119,7 +138,64 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private HandlerThread handlerThread;
+    private class MyCountownTimer extends CountDownTimer {
+        private  Context context;
+
+        MyCountownTimer (long millisInFuture, long countDownInterval, Context context) {
+            super (millisInFuture, countDownInterval);
+            this.context = context;
+        }
+
+        @Override
+        public void onTick(long millisUntilFinished) {
+
+        }
+
+        @Override
+        public void onFinish() {
+            // Display the main view
+            setContentView(R.layout.activity_main);
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+
+        /* Camera settings */
+
+            // Check the camera settings that can be changed
+            Camera tmpCamera = Camera.open(); // Camera object used solely to retrieve info about the camera parameters
+            Camera.Parameters parameters = tmpCamera.getParameters();
+            supportedPreviewFpsRange = parameters.getSupportedPreviewFpsRange();
+            supportedPictureSizes = parameters.getSupportedPreviewSizes();
+            Constants.FRAME_RATE_MIN = supportedPreviewFpsRange.get(0)[0] / 1000;
+            Constants.FRAME_RATE = supportedPreviewFpsRange.get(0)[1] / 1000;
+            Constants.PREVIEW_WIDTH = supportedPictureSizes.get(0).width;
+            Constants.PREVIEW_HEIGHT = supportedPictureSizes.get(0).height;
+            tmpCamera.release();
+
+            // Populate a spinner with the supported FPS ranges
+            List<String> fpsRangeString = new ArrayList<>(supportedPreviewFpsRange.size());
+            for (int i = 0; i < supportedPreviewFpsRange.size(); i++)
+                fpsRangeString.add("(" + supportedPreviewFpsRange.get(i)[0] + ", " + supportedPreviewFpsRange.get(i)[1] + ")");
+            fpsRangeSpinner = (Spinner) findViewById(R.id.preview_fps_range_spinner);
+            ArrayAdapter<String> fpsRangesArrayAdapter = new ArrayAdapter<>(context, android.R.layout.simple_spinner_item, fpsRangeString);
+            fpsRangeSpinner.setAdapter(fpsRangesArrayAdapter);
+            fpsRangeSpinner.setOnItemSelectedListener(new SpinnerListener());
+
+            // Populate a spinner with the supported picture sizes
+            List<String> pictureSizesString = new ArrayList<>(supportedPictureSizes.size());
+            for (int i = 0; i < supportedPictureSizes.size(); i++)
+                pictureSizesString.add(supportedPictureSizes.get(i).width + " X " + supportedPictureSizes.get(i).height);
+            pictureSizeSpinner = (Spinner) findViewById(R.id.picture_size_spinner);
+            ArrayAdapter<String> pictureSizesArrayAdapter = new ArrayAdapter<>(context, android.R.layout.simple_spinner_item, pictureSizesString);
+            pictureSizeSpinner.setAdapter(pictureSizesArrayAdapter);
+            pictureSizeSpinner.setOnItemSelectedListener(new SpinnerListener());
+
+        /* [End of camera settings] */
+
+            editSampleSize = (EditText) findViewById(R.id.edit_in_sample_size);
+            editCalibrationDuration = (EditText) findViewById(R.id.edit_calibration_duration);
+            editCropFactor = (EditText) findViewById(R.id.edit_crop_factor);
+            editNumOfSd = (EditText) findViewById(R.id.edit_num_of_sd);
+        }
+    }
 
     SurfaceView preview;
     SurfaceHolder previewHolder;
@@ -140,54 +216,8 @@ public class MainActivity extends AppCompatActivity {
         // Set on display the OpenGL surface view in order to call the OpenGL renderer and retrieve the GPU info
         setContentView(mGlSurfaceView);
 
-        // Display the main view
-        setContentView(R.layout.activity_main);
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-
-        /* Camera settings */
-
-        // Check the camera settings that can be changed
-        Camera tmpCamera = Camera.open(); // Camera object used solely to retrieve info about the camera parameters
-        Camera.Parameters parameters = tmpCamera.getParameters();
-        supportedPreviewFpsRange = parameters.getSupportedPreviewFpsRange();
-        supportedPictureSizes = parameters.getSupportedPreviewSizes();
-        Constants.FRAME_RATE_MIN = supportedPreviewFpsRange.get(0)[0] / 1000;
-        Constants.FRAME_RATE = supportedPreviewFpsRange.get(0)[1] / 1000;
-        Constants.PREVIEW_WIDTH = supportedPictureSizes.get(0).width;
-        Constants.PREVIEW_HEIGHT = supportedPictureSizes.get(0).height;
-        tmpCamera.release();
-
-        // Populate a spinner with the supported FPS ranges
-        List<String> fpsRangeString = new ArrayList<>(supportedPreviewFpsRange.size());
-        for (int i = 0; i < supportedPreviewFpsRange.size(); i++)
-            fpsRangeString.add("(" + supportedPreviewFpsRange.get(i)[0] + ", " + supportedPreviewFpsRange.get(i)[1] + ")");
-        fpsRangeSpinner = (Spinner) findViewById(R.id.preview_fps_range_spinner);
-        ArrayAdapter<String> fpsRangesArrayAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, fpsRangeString);
-        fpsRangeSpinner.setAdapter(fpsRangesArrayAdapter);
-        fpsRangeSpinner.setOnItemSelectedListener(new SpinnerListener());
-
-        // Populate a spinner with the supported picture sizes
-        List<String> pictureSizesString = new ArrayList<>(supportedPictureSizes.size());
-        for (int i = 0; i < supportedPictureSizes.size(); i++)
-            pictureSizesString.add(supportedPictureSizes.get(i).width + " X " + supportedPictureSizes.get(i).height);
-        pictureSizeSpinner = (Spinner) findViewById(R.id.picture_size_spinner);
-        ArrayAdapter<String> pictureSizesArrayAdapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, pictureSizesString);
-        pictureSizeSpinner.setAdapter(pictureSizesArrayAdapter);
-        pictureSizeSpinner.setOnItemSelectedListener(new SpinnerListener());
-
-        /* [End of camera settings] */
-
-        editSampleSize = (EditText) findViewById(R.id.edit_in_sample_size);
-        editCalibrationDuration = (EditText) findViewById(R.id.edit_calibration_duration);
-        editCropFactor = (EditText) findViewById(R.id.edit_crop_factor);
-        editNumOfSd = (EditText) findViewById(R.id.edit_num_of_sd);
-
-        // Create the handler thread to load the appropriate kernel based on GPU model
-        handlerThread = new HandlerThread("RendererRetrieverThread");
-        handlerThread.start();
-        Looper looper = handlerThread.getLooper();
-        Handler handler = new Handler(looper);
-        handler.post(new RendererRetriever());
+        MyCountownTimer myCountownTimer = new MyCountownTimer(2000, 1000, this);
+        myCountownTimer.start();
     }
 
     String kernel;
@@ -249,8 +279,6 @@ public class MainActivity extends AppCompatActivity {
         previewHolder = preview.getHolder();
         previewHolder.addCallback(DetectorService.surfaceHolderCallback);
 
-        handlerThread.quit();
-
         // Create the intent for the main service and bundle the string containing the OpenCL kernel
         Intent detectorIntent = new Intent(MainActivity.this, DetectorService.class);
         detectorIntent.putExtra("Kernel", kernel);
@@ -307,35 +335,4 @@ public class MainActivity extends AppCompatActivity {
         super.onDestroy();
     }
 
-    private class RendererRetriever implements Runnable {
-
-        @Override
-        public void run() {
-            // The OpenGL context needs time to be initialized, therefore wait before retrieving the renderer
-            try {
-                Thread.sleep(1000);
-            } catch (InterruptedException e) {
-                String stackTrace = Log.getStackTraceString(e);
-                Log.e("MainActivity", stackTrace);
-            }
-
-            // Get the GPU model
-            String renderer = prefs.getString("RENDERER", null);
-            assert renderer != null;
-
-            // Load the appropriate OpenCL kernel based on GPU model
-            switch (renderer) {
-                case "Mali-T880":
-                case "Mali-T720":
-                    kernel = loadKernelFromAsset(getInputStream("compLumi_vec4.cl"));
-                    break;
-                default:
-                    kernel = loadKernelFromAsset(getInputStream("compLumi_vec4.cl"));
-                    break;
-            }
-
-            // Load the appropriate OpenCL library based on the GPU vendor
-            loadGLLibrary();
-        }
-    }
 }
