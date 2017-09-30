@@ -226,7 +226,7 @@ public class DetectorService extends Service {
 
                     meanLumi += 0.2126f * r + 0.7152f * g + 0.0722f * b;
                 }
-                meanLumi /= pixels.length;
+                meanLumi /= lowResPicPixels.length;
 
                 // Create the bitmap storing the luminance map
                 Bitmap luminanceBitmap =
@@ -359,8 +359,8 @@ public class DetectorService extends Service {
 
     private File createImageFile(float luminance) throws IOException {
         // Create an image file name
-        String timeStamp = new SimpleDateFormat((int)luminance + "_yyyyMMdd_HHmmss", Locale.ITALY).format(new Date());
-        String imageFileName = "JPEG_" + timeStamp + "_";
+        //String timeStamp = new SimpleDateFormat((int)luminance + "_yyyyMMdd_HHmmss", Locale.ITALY).format(new Date());
+        String imageFileName = "" + luminance;
         File storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
         File image = File.createTempFile(
                 imageFileName,  /* prefix */
@@ -425,7 +425,10 @@ public class DetectorService extends Service {
                     parameters.setAutoExposureLock(true);
                     parameters.setAutoWhiteBalanceLock(true);
                     parameters.setPreviewSize(Constants.PREVIEW_WIDTH, Constants.PREVIEW_HEIGHT);
-                    parameters.setPreviewFpsRange(Constants.FRAME_RATE_MIN * 1000, Constants.FRAME_RATE * 1000);
+                    if (Constants.FPS_DYNAMIC)
+                        parameters.setPreviewFpsRange(Constants.FRAME_RATE_MIN * 1000, Constants.FRAME_RATE * 1000);
+                    else
+                        parameters.setPreviewFrameRate(Constants.FRAME_RATE);
                     legacyCamera.setParameters(parameters);
                     legacyCamera.setDisplayOrientation(90);
                     try {
@@ -448,6 +451,11 @@ public class DetectorService extends Service {
 
     @Override
     public void onTaskRemoved(Intent intent) {
+        onDestroy();
+    }
+
+    @Override
+    public void onDestroy() {
         shutdown = true;
         synchronized (captureThreadLock) {
             captureThreadLock.notify();

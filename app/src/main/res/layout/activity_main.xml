@@ -15,6 +15,23 @@
         android:layout_weight="1"
         android:layout_width="wrap_content"
         android:layout_height="0dp">
+        <TextView android:id="@+id/fps"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/fps"
+            />
+        <Spinner
+            android:id="@+id/fps_spinner"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            />
+    </LinearLayout>
+
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_weight="1"
+        android:layout_width="wrap_content"
+        android:layout_height="0dp">
         <TextView android:id="@+id/preview_fps_range"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -26,6 +43,12 @@
             android:layout_height="wrap_content"
             />
     </LinearLayout>
+
+    <TextView android:id="@+id/fps_mode"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/fps_mode_dynamic"
+        />
 
     <LinearLayout
         android:orientation="horizontal"

@@ -8,9 +8,6 @@ import android.hardware.Camera;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
 import android.os.CountDownTimer;
-import android.os.Handler;
-import android.os.HandlerThread;
-import android.os.Looper;
 import android.support.v4.content.LocalBroadcastManager;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
@@ -22,6 +19,7 @@ import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.Spinner;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.IOException;
@@ -157,18 +155,27 @@ public class MainActivity extends AppCompatActivity {
             setContentView(R.layout.activity_main);
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
 
-        /* Camera settings */
+            /* Camera settings */
 
             // Check the camera settings that can be changed
             Camera tmpCamera = Camera.open(); // Camera object used solely to retrieve info about the camera parameters
             Camera.Parameters parameters = tmpCamera.getParameters();
             supportedPreviewFpsRange = parameters.getSupportedPreviewFpsRange();
+            supportedFps = parameters.getSupportedPreviewFrameRates();
             supportedPictureSizes = parameters.getSupportedPreviewSizes();
             Constants.FRAME_RATE_MIN = supportedPreviewFpsRange.get(0)[0] / 1000;
             Constants.FRAME_RATE = supportedPreviewFpsRange.get(0)[1] / 1000;
             Constants.PREVIEW_WIDTH = supportedPictureSizes.get(0).width;
             Constants.PREVIEW_HEIGHT = supportedPictureSizes.get(0).height;
             tmpCamera.release();
+
+            // Populate a spinner with the supported FPS (Static)
+            List<String> fpsString = new ArrayList<>(supportedFps.size());
+            for (int i = 0; i < supportedFps.size(); i++)
+                fpsString.add("" + supportedFps.get(i));
+            fpsSpinner = (Spinner) findViewById(R.id.fps_spinner);
+            ArrayAdapter<String> fpsArrayAdapter = new ArrayAdapter<>(context, android.R.layout.simple_spinner_item, fpsString);
+
 
             // Populate a spinner with the supported FPS ranges
             List<String> fpsRangeString = new ArrayList<>(supportedPreviewFpsRange.size());
@@ -179,6 +186,9 @@ public class MainActivity extends AppCompatActivity {
             fpsRangeSpinner.setAdapter(fpsRangesArrayAdapter);
             fpsRangeSpinner.setOnItemSelectedListener(new SpinnerListener());
 
+            fpsSpinner.setAdapter(fpsArrayAdapter);
+            fpsSpinner.setOnItemSelectedListener(new SpinnerListener());
+
             // Populate a spinner with the supported picture sizes
             List<String> pictureSizesString = new ArrayList<>(supportedPictureSizes.size());
             for (int i = 0; i < supportedPictureSizes.size(); i++)
@@ -188,7 +198,7 @@ public class MainActivity extends AppCompatActivity {
             pictureSizeSpinner.setAdapter(pictureSizesArrayAdapter);
             pictureSizeSpinner.setOnItemSelectedListener(new SpinnerListener());
 
-        /* [End of camera settings] */
+              /* [End of camera settings] */
 
             editSampleSize = (EditText) findViewById(R.id.edit_in_sample_size);
             editCalibrationDuration = (EditText) findViewById(R.id.edit_calibration_duration);
@@ -200,8 +210,9 @@ public class MainActivity extends AppCompatActivity {
     SurfaceView preview;
     SurfaceHolder previewHolder;
     List<int[]> supportedPreviewFpsRange;
+    List<Integer> supportedFps;
     List<Camera.Size> supportedPictureSizes;
-    Spinner fpsRangeSpinner, pictureSizeSpinner;
+    Spinner fpsRangeSpinner, pictureSizeSpinner, fpsSpinner;
     EditText editSampleSize = null, editCalibrationDuration = null, editCropFactor = null, editNumOfSd = null;
 
     @Override
@@ -221,6 +232,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     String kernel;
+    Intent detectorIntent;
 
     public void startService(View view) {
         // Read from the editable box the sample size used to downscale the picture
@@ -280,9 +292,16 @@ public class MainActivity extends AppCompatActivity {
         previewHolder.addCallback(DetectorService.surfaceHolderCallback);
 
         // Create the intent for the main service and bundle the string containing the OpenCL kernel
-        Intent detectorIntent = new Intent(MainActivity.this, DetectorService.class);
+        detectorIntent = new Intent(MainActivity.this, DetectorService.class);
         detectorIntent.putExtra("Kernel", kernel);
         MainActivity.this.startService(detectorIntent);
+    }
+
+    public void StopCapture (View view) {
+        MainActivity.this.stopService(detectorIntent);
+
+        Intent resizePicsIntent = new Intent(MainActivity.this, ResizePicsActivity.class);
+        MainActivity.this.startActivity(resizePicsIntent);
     }
 
     /*
@@ -296,9 +315,20 @@ public class MainActivity extends AppCompatActivity {
             if (parent.getId() == fpsRangeSpinner.getId()) {
                 Constants.FRAME_RATE_MIN = supportedPreviewFpsRange.get(position)[0] / 1000;
                 Constants.FRAME_RATE = supportedPreviewFpsRange.get(position)[1] / 1000;
+                Constants.FPS_DYNAMIC = true;
+                TextView fpsMode = (TextView) findViewById(R.id.fps_mode);
+                String dynamicMode = getResources().getString(R.string.fps_mode_dynamic);
+                fpsMode.setText(dynamicMode);
             } else if (parent.getId() == pictureSizeSpinner.getId()) {
                 Constants.PREVIEW_WIDTH = supportedPictureSizes.get(position).width;
                 Constants.PREVIEW_HEIGHT = supportedPictureSizes.get(position).height;
+            } else if (parent.getId() == fpsSpinner.getId()) {
+                Constants.FRAME_RATE_MIN = supportedFps.get(position);
+                Constants.FRAME_RATE = Constants.FRAME_RATE_MIN;
+                Constants.FPS_DYNAMIC = false;
+                TextView fpsMode = (TextView) findViewById(R.id.fps_mode);
+                String staticMode = getResources().getString(R.string.fps_mode_static);
+                fpsMode.setText(staticMode);
             }
         }
 
