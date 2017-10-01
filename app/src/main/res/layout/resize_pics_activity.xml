@@ -3,7 +3,7 @@
     android:orientation="vertical" android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <ImageView
+    <view class = 'com.example.muondetector.ResizePicsActivity$MyImageView'
         android:id="@+id/cropPictureView"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"

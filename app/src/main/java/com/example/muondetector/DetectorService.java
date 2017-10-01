@@ -7,6 +7,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.ImageFormat;
+import android.graphics.Matrix;
 import android.graphics.Rect;
 import android.graphics.YuvImage;
 import android.hardware.Camera;
@@ -232,12 +233,17 @@ public class DetectorService extends Service {
                 Bitmap luminanceBitmap =
                         Bitmap.createBitmap(luminanceMap(openCLObject, maxLumi, meanLumi, pixels), Constants.CROP_WIDTH, Constants.CROP_HEIGHT, Bitmap.Config.ARGB_8888);
 
+                // Rotate the bitmap
+                Matrix rotationMatrix = new Matrix();
+                rotationMatrix.postRotate(90);
+                Bitmap rotatedLumuBmp = Bitmap.createBitmap(luminanceBitmap, 0, 0, luminanceBitmap.getWidth(), luminanceBitmap.getHeight(), rotationMatrix, true);
+
                 // Create the file that will store the image
                 File imageFile = createImageFile(maxLumi);
                 FileOutputStream fileOutputStream = new FileOutputStream(imageFile);
 
                 // Store the luminance map in the file
-                luminanceBitmap.compress(Bitmap.CompressFormat.JPEG, 100, fileOutputStream);
+                rotatedLumuBmp.compress(Bitmap.CompressFormat.JPEG, 100, fileOutputStream);
                 fileOutputStream.close();
             } catch (IOException e) {
                 String stackTrace = Log.getStackTraceString(e);
@@ -360,7 +366,7 @@ public class DetectorService extends Service {
     private File createImageFile(float luminance) throws IOException {
         // Create an image file name
         //String timeStamp = new SimpleDateFormat((int)luminance + "_yyyyMMdd_HHmmss", Locale.ITALY).format(new Date());
-        String imageFileName = "" + luminance;
+        String imageFileName = "" + (int)luminance;
         File storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
         File image = File.createTempFile(
                 imageFileName,  /* prefix */
