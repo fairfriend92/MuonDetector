@@ -4,11 +4,13 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
-import android.graphics.Color;
+import android.graphics.Matrix;
+
 import android.graphics.drawable.BitmapDrawable;
 import android.os.Bundle;
 import android.os.Environment;
 import android.support.v4.view.GestureDetectorCompat;
+import android.support.v4.view.ViewCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.util.AttributeSet;
 import android.util.Log;
@@ -16,7 +18,6 @@ import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.view.View;
-import android.widget.ImageView;
 
 import java.io.File;
 
@@ -24,9 +25,9 @@ public class ResizePicsActivity extends AppCompatActivity {
 
     private GestureDetectorCompat myGestureDetector;
     private ScaleGestureDetector myScaleGestureDetector;
-    private static float scaleFactor = 1.0f;
     private MyImageView cropPictureView;
     static Bitmap bitmap;
+    static Matrix drawMatrix = new Matrix();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -68,11 +69,33 @@ public class ResizePicsActivity extends AppCompatActivity {
     }
 
     private class MyScaleGestureDetector extends ScaleGestureDetector.SimpleOnScaleGestureListener {
+
+        float lastFocusX;
+        float lastFocusY;
+
+        @Override
+        public boolean onScaleBegin(ScaleGestureDetector detector) {
+            lastFocusX = detector.getFocusX();
+            lastFocusY = detector.getFocusY();
+            return true;
+        }
+
         @Override
         public boolean onScale(ScaleGestureDetector detector) {
-            scaleFactor *= detector.getScaleFactor();
-            scaleFactor = Math.max(0.1f, Math.min(scaleFactor, 5.0f));
-            cropPictureView.invalidate();
+            Matrix transformationMatrix = new Matrix();
+            float focusX = detector.getFocusX();
+            float focusY = detector.getFocusY();
+
+            transformationMatrix.postTranslate(-focusX, -focusY);
+            transformationMatrix.postScale(detector.getScaleFactor(), detector.getScaleFactor());
+            float focusShiftX = focusX - lastFocusX;
+            float focusShiftY = focusY - lastFocusY;
+            transformationMatrix.postTranslate(focusX + focusShiftX, focusY + focusShiftY);
+            drawMatrix.postConcat(transformationMatrix);
+            lastFocusX = focusX;
+            lastFocusY = focusY;
+
+            ViewCompat.postInvalidateOnAnimation(cropPictureView);
             return true;
         }
     }
@@ -93,11 +116,8 @@ public class ResizePicsActivity extends AppCompatActivity {
         @Override
         public void onDraw(Canvas canvas) {
             super.onDraw(canvas);
-            Log.d("MyImageView", "test " + scaleFactor);
-
             canvas.save();
-            canvas.scale(scaleFactor, scaleFactor);
-            canvas.drawBitmap(bitmap, 0, 0, null);
+            canvas.drawBitmap(bitmap, drawMatrix, null);
             canvas.restore();
         }
     }
