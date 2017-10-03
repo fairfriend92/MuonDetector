@@ -26,8 +26,12 @@ public class ResizePicsActivity extends AppCompatActivity {
     private GestureDetectorCompat myGestureDetector;
     private ScaleGestureDetector myScaleGestureDetector;
     private MyImageView cropPictureView;
-    static Bitmap bitmap;
-    static Matrix drawMatrix = new Matrix();
+
+    private static final float MIN_ZOOM = 1.0f;
+    private static final float MAX_ZOOM = 5.0f;
+    private static float scaleFactor = 1.0f, focusX, focusY, translateX = 0.0f, translateY = 0.0f;
+
+    private static Bitmap bitmap;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -55,9 +59,53 @@ public class ResizePicsActivity extends AppCompatActivity {
     }
 
     private class MyOnTouchListener implements View.OnTouchListener {
+        private static final int NONE = 0, DRAG = 1, ZOOM = 2;
+        private int mode;
+
+        private float startX = 0.0f, startY = 0.0f, previousTranslateX = 0.0f, previousTranslateY = 0.0f;
+
+        private boolean dragged;
+
         @Override
         public boolean onTouch(View v, MotionEvent event) {
-            return myScaleGestureDetector.onTouchEvent(event);
+            switch (event.getAction() & MotionEvent.ACTION_MASK) {
+                case MotionEvent.ACTION_DOWN:
+                    mode = DRAG;
+                    startX = event.getX() - previousTranslateX;
+                    startY = event.getY() - previousTranslateY;
+                    break;
+                case MotionEvent.ACTION_MOVE:
+                    translateX = event.getX() - startX;
+                    translateY = event.getY() - startY;
+                    double distance = Math.sqrt(Math.pow(event.getX() - (startX + previousTranslateX), 2) +
+                            Math.pow(event.getY() - (startY + previousTranslateY), 2));
+                    if (distance > 0) {
+                        dragged = true;
+                    }
+                    break;
+                case MotionEvent.ACTION_POINTER_DOWN:
+                    mode = ZOOM;
+                    break;
+                case MotionEvent.ACTION_UP:
+                    mode = NONE;
+                    dragged = false;
+                    previousTranslateX = translateX;
+                    previousTranslateY = translateY;
+                    break;
+                case MotionEvent.ACTION_POINTER_UP:
+                    mode = DRAG;
+                    previousTranslateX = translateX;
+                    previousTranslateY = translateY;
+            }
+
+            myScaleGestureDetector.onTouchEvent(event);
+
+            if ((mode == DRAG && scaleFactor != 1.0f && dragged) || mode == ZOOM) {
+                ViewCompat.postInvalidateOnAnimation(cropPictureView);
+                Log.d("MyOnTouchListener", "test");
+            }
+
+            return true;
         }
     }
 
@@ -70,32 +118,12 @@ public class ResizePicsActivity extends AppCompatActivity {
 
     private class MyScaleGestureDetector extends ScaleGestureDetector.SimpleOnScaleGestureListener {
 
-        float lastFocusX;
-        float lastFocusY;
-
-        @Override
-        public boolean onScaleBegin(ScaleGestureDetector detector) {
-            lastFocusX = detector.getFocusX();
-            lastFocusY = detector.getFocusY();
-            return true;
-        }
-
         @Override
         public boolean onScale(ScaleGestureDetector detector) {
-            Matrix transformationMatrix = new Matrix();
-            float focusX = detector.getFocusX();
-            float focusY = detector.getFocusY();
-
-            transformationMatrix.postTranslate(-focusX, -focusY);
-            transformationMatrix.postScale(detector.getScaleFactor(), detector.getScaleFactor());
-            float focusShiftX = focusX - lastFocusX;
-            float focusShiftY = focusY - lastFocusY;
-            transformationMatrix.postTranslate(focusX + focusShiftX, focusY + focusShiftY);
-            drawMatrix.postConcat(transformationMatrix);
-            lastFocusX = focusX;
-            lastFocusY = focusY;
-
-            ViewCompat.postInvalidateOnAnimation(cropPictureView);
+            focusX = detector.getFocusX();
+            focusY = detector.getFocusY();
+            scaleFactor *= detector.getScaleFactor();
+            scaleFactor = Math.max(MIN_ZOOM, Math.min(scaleFactor, MAX_ZOOM));
             return true;
         }
     }
@@ -116,8 +144,23 @@ public class ResizePicsActivity extends AppCompatActivity {
         @Override
         public void onDraw(Canvas canvas) {
             super.onDraw(canvas);
+
             canvas.save();
-            canvas.drawBitmap(bitmap, drawMatrix, null);
+            canvas.scale(scaleFactor, scaleFactor);
+            if((translateX * -1) < 0) {
+                translateX = 0;
+            } else if((translateX * -1) > (scaleFactor - 1) * this.getWidth()) {
+                translateX = (1 - scaleFactor) * this.getWidth();
+            }
+
+            if(translateY * -1 < 0) {
+                translateY = 0;
+            } else if((translateY * -1) > (scaleFactor - 1) * this.getHeight()) {
+                translateY = (1 - scaleFactor) * this.getHeight();
+            }
+
+            canvas.translate(translateX / scaleFactor, translateY / scaleFactor);
+            canvas.drawBitmap(bitmap, 0, 0, null);
             canvas.restore();
         }
     }
