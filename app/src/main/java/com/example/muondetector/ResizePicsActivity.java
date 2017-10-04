@@ -1,11 +1,15 @@
 package com.example.muondetector;
 
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.Matrix;
 
+import android.graphics.Paint;
+import android.graphics.RectF;
 import android.graphics.drawable.BitmapDrawable;
 import android.os.Bundle;
 import android.os.Environment;
@@ -18,6 +22,8 @@ import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.view.View;
+import android.widget.CompoundButton;
+import android.widget.ToggleButton;
 
 import java.io.File;
 
@@ -29,8 +35,9 @@ public class ResizePicsActivity extends AppCompatActivity {
 
     private static final float MIN_ZOOM = 1.0f;
     private static final float MAX_ZOOM = 5.0f;
-    private static float scaleFactor = 1.0f, focusX, focusY, translateX = 0.0f, translateY = 0.0f;
-
+    private static float scaleFactor = 1.0f, translateX = 0.0f, translateY = 0.0f,
+            startX = 0.0f, startY = 0.0f, endX = 0.0f, endY = 0.0f;
+    private static boolean croppingPic = false;
     private static Bitmap bitmap;
 
     @Override
@@ -55,6 +62,14 @@ public class ResizePicsActivity extends AppCompatActivity {
             cropPictureView = (MyImageView) findViewById(R.id.cropPictureView);
             cropPictureView.setOnTouchListener(myOnTouchListener);
             cropPictureView.setImageDrawable(new BitmapDrawable(getResources(), bitmap));
+
+            ToggleButton toggleButton = (ToggleButton) findViewById(R.id.cropRectButton);
+            toggleButton.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+                @Override
+                public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                    croppingPic = isChecked;
+                }
+            });
         }
     }
 
@@ -62,52 +77,69 @@ public class ResizePicsActivity extends AppCompatActivity {
         private static final int NONE = 0, DRAG = 1, ZOOM = 2;
         private int mode;
 
-        private float startX = 0.0f, startY = 0.0f, previousTranslateX = 0.0f, previousTranslateY = 0.0f;
+        private float previousTranslateX = 0.0f, previousTranslateY = 0.0f;
 
         private boolean dragged;
 
         @Override
         public boolean onTouch(View v, MotionEvent event) {
-            switch (event.getAction() & MotionEvent.ACTION_MASK) {
-                case MotionEvent.ACTION_DOWN:
-                    mode = DRAG;
-                    startX = event.getX() - previousTranslateX;
-                    startY = event.getY() - previousTranslateY;
-                    break;
-                case MotionEvent.ACTION_MOVE:
-                    translateX = event.getX() - startX;
-                    translateY = event.getY() - startY;
-                    double distance = Math.sqrt(Math.pow(event.getX() - (startX + previousTranslateX), 2) +
-                            Math.pow(event.getY() - (startY + previousTranslateY), 2));
-                    if (distance > 0) {
-                        dragged = true;
-                    }
-                    break;
-                case MotionEvent.ACTION_POINTER_DOWN:
-                    mode = ZOOM;
-                    break;
-                case MotionEvent.ACTION_UP:
-                    mode = NONE;
-                    dragged = false;
-                    previousTranslateX = translateX;
-                    previousTranslateY = translateY;
-                    break;
-                case MotionEvent.ACTION_POINTER_UP:
-                    mode = DRAG;
-                    previousTranslateX = translateX;
-                    previousTranslateY = translateY;
-            }
+            if (!croppingPic) {
+                switch (event.getAction() & MotionEvent.ACTION_MASK) {
+                    case MotionEvent.ACTION_DOWN:
+                        mode = DRAG;
+                        startX = event.getX() - previousTranslateX;
+                        startY = event.getY() - previousTranslateY;
+                        break;
+                    case MotionEvent.ACTION_MOVE:
+                        translateX = event.getX() - startX;
+                        translateY = event.getY() - startY;
+                        double distance = Math.sqrt(Math.pow(event.getX() - (startX + previousTranslateX), 2) +
+                                Math.pow(event.getY() - (startY + previousTranslateY), 2));
+                        if (distance > 0) {
+                            dragged = true;
+                        }
+                        break;
+                    case MotionEvent.ACTION_POINTER_DOWN:
+                        mode = ZOOM;
+                        break;
+                    case MotionEvent.ACTION_UP:
+                        mode = NONE;
+                        dragged = false;
+                        previousTranslateX = translateX;
+                        previousTranslateY = translateY;
+                        break;
+                    case MotionEvent.ACTION_POINTER_UP:
+                        mode = DRAG;
+                        previousTranslateX = translateX;
+                        previousTranslateY = translateY;
+                }
 
-            myScaleGestureDetector.onTouchEvent(event);
+                myScaleGestureDetector.onTouchEvent(event);
 
-            if ((mode == DRAG && scaleFactor != 1.0f && dragged) || mode == ZOOM) {
+                if ((mode == DRAG && scaleFactor != 1.0f && dragged) || mode == ZOOM) {
+                    ViewCompat.postInvalidateOnAnimation(cropPictureView);
+                }
+            } else {
+                endX = event.getX();
+                endY = event.getY();
+                switch (event.getAction()) {
+                    case MotionEvent.ACTION_DOWN:
+                        startX = endX;
+                        startY = endY;
+                        return true;
+                    case MotionEvent.ACTION_MOVE:
+                        break;
+                    default:
+                        return false;
+                }
                 ViewCompat.postInvalidateOnAnimation(cropPictureView);
-                Log.d("MyOnTouchListener", "test");
             }
 
             return true;
         }
     }
+
+
 
     private class MyGestureDetector extends GestureDetector.SimpleOnGestureListener {
         @Override
@@ -120,8 +152,6 @@ public class ResizePicsActivity extends AppCompatActivity {
 
         @Override
         public boolean onScale(ScaleGestureDetector detector) {
-            focusX = detector.getFocusX();
-            focusY = detector.getFocusY();
             scaleFactor *= detector.getScaleFactor();
             scaleFactor = Math.max(MIN_ZOOM, Math.min(scaleFactor, MAX_ZOOM));
             return true;
@@ -129,22 +159,17 @@ public class ResizePicsActivity extends AppCompatActivity {
     }
 
     public static class MyImageView extends android.support.v7.widget.AppCompatImageView {
-        public MyImageView(Context context) {
-            super(context);
-        }
+        private Paint paint = new Paint();
+        private RectF rectF = new RectF();
 
         public MyImageView(Context context, AttributeSet attrs) {
             super(context, attrs);
-        }
-
-        public MyImageView(Context context, AttributeSet attrs, int defStyleAttr) {
-            super(context, attrs, defStyleAttr);
+            paint.setColor(Color.BLACK);
         }
 
         @Override
         public void onDraw(Canvas canvas) {
             super.onDraw(canvas);
-
             canvas.save();
             canvas.scale(scaleFactor, scaleFactor);
             if((translateX * -1) < 0) {
@@ -158,9 +183,16 @@ public class ResizePicsActivity extends AppCompatActivity {
             } else if((translateY * -1) > (scaleFactor - 1) * this.getHeight()) {
                 translateY = (1 - scaleFactor) * this.getHeight();
             }
-
             canvas.translate(translateX / scaleFactor, translateY / scaleFactor);
             canvas.drawBitmap(bitmap, 0, 0, null);
+            if (croppingPic) {
+                Log.d("onDraw", " " + translateX);
+                rectF.left = (startX - translateX) / scaleFactor;
+                rectF.top = (startY - translateY) / scaleFactor;
+                rectF.right = (endX - translateX) / scaleFactor;
+                rectF.bottom = (endY - translateY) / scaleFactor;
+                canvas.drawRect(rectF, paint);
+            }
             canvas.restore();
         }
     }

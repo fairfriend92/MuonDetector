@@ -151,5 +151,4 @@
         android:text="@string/start_service_button"
         android:onClick="startService" />
 
-
 </LinearLayout>
