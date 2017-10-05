@@ -20,5 +20,6 @@
     <string name="cropPictureContent">"Cropped picture"</string>
     <string name="crop_rect_button_off">"Scale mode"</string>
     <string name="crop_rect_button_on">"Crop mode"</string>
+    <string name="saveCroppedPic">"Save cropped pic"</string>
 
 </resources>

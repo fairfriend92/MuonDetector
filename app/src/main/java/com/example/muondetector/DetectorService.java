@@ -361,8 +361,6 @@ public class DetectorService extends Service {
         }
     };
 
-    String currentPhotoPath;
-
     private File createImageFile(float luminance) throws IOException {
         // Create an image file name
         //String timeStamp = new SimpleDateFormat((int)luminance + "_yyyyMMdd_HHmmss", Locale.ITALY).format(new Date());
@@ -374,8 +372,6 @@ public class DetectorService extends Service {
                 storageDir      /* directory */
         );
 
-        // Save a file: path for use with ACTION_VIEW intents
-        currentPhotoPath = image.getAbsolutePath();
         return image;
     }
 

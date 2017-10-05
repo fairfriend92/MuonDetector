@@ -1,19 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
 <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:orientation="vertical" android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
 
-    <view class = 'com.example.muondetector.ResizePicsActivity$MyImageView'
+    <view
         android:id="@+id/cropPictureView"
+        class='com.example.muondetector.ResizePicsActivity$MyImageView'
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:contentDescription="@string/cropPictureContent"/>
+        android:contentDescription="@string/cropPictureContent" />
 
     <ToggleButton
         android:id="@+id/cropRectButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:textOff="@string/crop_rect_button_off"
-        android:textOn="@string/crop_rect_button_on"/>
+        android:textOn="@string/crop_rect_button_on"
+        android:layout_alignParentStart="true" />
+
+    <Button
+        android:id="@+id/saveButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/saveCroppedPic"
+        android:layout_below="@id/cropRectButton"
+        android:onClick="SavePic"
+        android:visibility="invisible" />
 
 </RelativeLayout>
