@@ -28,4 +28,15 @@
         android:onClick="SavePic"
         android:visibility="invisible" />
 
+    <Button
+        android:id="@+id/discardPicButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/discardPic"
+        android:onClick="DiscardPic"
+        android:visibility="invisible"
+        android:layout_alignBaseline="@+id/saveButton"
+        android:layout_alignBottom="@+id/saveButton"
+        android:layout_alignParentEnd="true" />
+
 </RelativeLayout>

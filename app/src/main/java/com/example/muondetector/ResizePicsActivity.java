@@ -31,23 +31,31 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 
+/*
+Activity that shows the pics that were take during the detection phase and asks the user to crop
+them before sending them to the server.
+ */
+
 public class ResizePicsActivity extends AppCompatActivity {
 
-    private GestureDetectorCompat myGestureDetector;
     private ScaleGestureDetector myScaleGestureDetector;
-    private MyImageView cropPictureView;
+    private MyImageView cropPictureView; // Custom ImageView
 
+    // Constants
     private static final float MIN_ZOOM = 1.0f;
     private static final float MAX_ZOOM = 5.0f;
-    private static final float MAX_AREA = 1000.0f;
+    private static final float MAX_AREA = 1000.0f; // Maximum area of the cropped pic
+
+    // Static variables/objects that are used by the onDraw method of MyImageView
     private static float scaleFactor = 1.0f, translateX = 0.0f, translateY = 0.0f,
             startX = 0.0f, startY = 0.0f, endX = 0.0f, endY = 0.0f, rectArea = 0.0f;
     private static boolean croppingPic = false;
     private static Bitmap bitmap;
     private static RectF rectF = new RectF();
-    private File[] pics;
+
+    private File[] pics; // Array containing all the pictures taken during the detection phase
     private BitmapFactory.Options options;
-    private int currentPic = 0;
+    private int currentPic = 0; // Index of the pic that is being displayed
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -56,6 +64,7 @@ public class ResizePicsActivity extends AppCompatActivity {
 
         File storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
         if (storageDir != null) {
+            // Save the references to the picture taken during the detection phase
             String picsFolderPath = storageDir.getAbsolutePath();
             File picsFolder = new File(picsFolderPath);
             pics = picsFolder.listFiles();
@@ -63,31 +72,52 @@ public class ResizePicsActivity extends AppCompatActivity {
             options = new BitmapFactory.Options();
             options.inMutable = true;
 
-            if (LoadNextPic()) {
+            if (LoadNextPic()) { // If there are some pics in the folder enter the block
                 MyOnTouchListener myOnTouchListener = new MyOnTouchListener();
-                myGestureDetector = new GestureDetectorCompat(this, new MyGestureDetector());
                 myScaleGestureDetector = new ScaleGestureDetector(this, new MyScaleGestureDetector());
 
+                // Setup the custom ImageView so that gestures are detected when touching it
                 cropPictureView = (MyImageView) findViewById(R.id.cropPictureView);
                 cropPictureView.setOnTouchListener(myOnTouchListener);
                 cropPictureView.setImageDrawable(new BitmapDrawable(getResources(), bitmap));
 
+                // The button for switching between scaling mode and cropping mode
+                // Scaling: zoom in/out the picture
+                // Cropping: crop a rect of area no greater than MAX_AREA and save it
                 ToggleButton toggleButton = (ToggleButton) findViewById(R.id.cropRectButton);
                 toggleButton.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
                     @Override
                     public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
                         croppingPic = isChecked;
+
+                        // When in cropping mode display the needed additional buttons
                         Button saveButton = (Button) findViewById(R.id.saveButton);
+                        Button discardButton = (Button) findViewById(R.id.discardPicButton);
                         int visibility = croppingPic ? View.VISIBLE : View.INVISIBLE;
                         saveButton.setVisibility(visibility);
+                        discardButton.setVisibility(visibility);
                     }
                 });
-            }
+            } // If no pics were take, shutdown gracefully
+            /* [End of inner if] */
+        } else  {
+            CharSequence text = "A problem when reading the directory has occurred";
+            Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
+            setResult(RESULT_OK);
+            finish();
         }
+        /* [End of outer if] */
     }
+    /* [End of onCreate method] */
+
+    /*
+    Called when the save pic button is pressed
+     */
 
     public void SavePic (View view) throws IOException {
+        // Proceed only if the cropped region is of the right size
         if (rectF != null & rectArea < MAX_AREA & rectArea > 0) {
+            // Prepare the file for saving the cropped pic
             String imageFileName = "cropped";
             File storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES + File.separator + "cropped");
             File image = File.createTempFile(
@@ -95,50 +125,93 @@ public class ResizePicsActivity extends AppCompatActivity {
                     ".jpg",         /* suffix */
                     storageDir      /* directory */
             );
-
             FileOutputStream fileOutputStream = new FileOutputStream(image);
+
+            // Create the cropped pic using the coordinate of the rectangle drawn on screen
             Bitmap croppedBmp = Bitmap.createBitmap(bitmap, (int) rectF.left, (int) rectF.top, (int) (rectF.right - rectF.left), (int) (rectF.bottom - rectF.top));
             croppedBmp.compress(Bitmap.CompressFormat.JPEG, 100, fileOutputStream);
+
+            // Save the pic
             fileOutputStream.close();
             CharSequence text = "Pic saved";
             Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
+
+            // Now that the cropped pic has been saved, the original one can be deleted
+            if (!pics[currentPic - 1].delete()) {
+                text = "Error deleting original pic";
+                Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
+            }
+
             LoadNextPic();
-        } else {
-            CharSequence text = "Cropped area is either too big or null";
+        } else if (rectArea > MAX_AREA){
+            CharSequence text = "Cropped area is either too";
+            Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
+        } else if (rectF == null | rectArea <= 0) {
+            CharSequence text = "Cropped area is zero";
             Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
         }
-
     }
 
+    public void DiscardPic (View view) {
+        LoadNextPic();
+    }
+
+    /*
+    Called to prepare the next bitmap when the current one has either been discarded or cropped and
+    saved
+     */
+
     private boolean LoadNextPic () {
-        if (currentPic < pics.length && pics[currentPic].isDirectory())
+        // If the current file is, indeed, a directory, simply move over to the next one
+        if (currentPic < pics.length && pics[currentPic].isDirectory()) {
             currentPic++;
+        }
+
+        // If there is still at least one pic left to review enter the block
         if (currentPic < pics.length) {
+            // Update the reference of the pic showed by the custom ImageView
             bitmap = BitmapFactory.decodeFile(pics[currentPic].getAbsolutePath(), options);
-            if (cropPictureView != null)
+
+            // Call the onDraw method of MyImageView
+            if (cropPictureView != null) // TODO: the view should never be null
                 ViewCompat.postInvalidateOnAnimation(cropPictureView);
+
             currentPic++;
             return true;
-        } else {
-            setContentView(R.layout.activity_main);
+        } else { // If no pics are left to review, finish the activity
+            CharSequence text = "All pics reviewed";
+            Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
+            setResult(RESULT_OK);
             finish();
             return false;
         }
 
     }
 
+    /*
+    Listener which detects the gestures and uses the relative info to compute how much the pic
+    should be translated or how big the rectangle containing the portion of the pic to be cropped
+    should be.
+     */
+
     private class MyOnTouchListener implements View.OnTouchListener {
+        // Mode defined by the kind of gesture detected
         private static final int NONE = 0, DRAG = 1, ZOOM = 2;
         private int mode;
 
-        private float previousTranslateX = 0.0f, previousTranslateY = 0.0f;
-
+        private float previousTranslateX = 0.0f, previousTranslateY = 0.0f; // Last translation values
         private boolean dragged;
 
         @Override
         public boolean onTouch(View v, MotionEvent event) {
+            // Proceed only when scaling mode is selected
             if (!croppingPic) {
                 switch (event.getAction() & MotionEvent.ACTION_MASK) {
+                    /* event.getX() gives us the screen coordinate. We need the coordinate of the
+                    bitmap pixel which is being pointed at. Therefore the last translation values need
+                    to be subtracted to the coordinates returned by getX(). In other words we change
+                    the reference system from that of the device screen to that of the bitmap
+                     */
                     case MotionEvent.ACTION_DOWN:
                         mode = DRAG;
                         startX = event.getX() - previousTranslateX;
@@ -173,11 +246,18 @@ public class ResizePicsActivity extends AppCompatActivity {
                 if ((mode == DRAG && scaleFactor != 1.0f && dragged) || mode == ZOOM) {
                     ViewCompat.postInvalidateOnAnimation(cropPictureView);
                 }
-            } else {
+            }
+            /* When in scaling mode, simply save the coordinates of the pixel pointed at when the finger
+            touches the screen and when it is raised.
+             */
+            else {
+                // endX and endY are current coordinate of the pixel being pointed at
                 endX = event.getX();
                 endY = event.getY();
                 switch (event.getAction()) {
                     case MotionEvent.ACTION_DOWN:
+                        // startX and startY are the coordinate of the pixel pointed at when the
+                        // finger first touches the screen
                         startX = endX;
                         startY = endY;
                         return true;
@@ -193,14 +273,9 @@ public class ResizePicsActivity extends AppCompatActivity {
         }
     }
 
-
-
-    private class MyGestureDetector extends GestureDetector.SimpleOnGestureListener {
-        @Override
-        public boolean onDown(MotionEvent event) {
-            return myScaleGestureDetector.onTouchEvent(event);
-        }
-    }
+    /*
+    Listener that update the scale factor whenever a "scale" gesture is detected
+     */
 
     private class MyScaleGestureDetector extends ScaleGestureDetector.SimpleOnScaleGestureListener {
 
@@ -211,6 +286,11 @@ public class ResizePicsActivity extends AppCompatActivity {
             return true;
         }
     }
+
+    /*
+    Custom ImageView which translates and scales the underlying bitmap and draws a rectangle on top
+    of it
+     */
 
     public static class MyImageView extends android.support.v7.widget.AppCompatImageView {
         private Paint paintBlack = new Paint(), paintGreen = new Paint();
@@ -230,6 +310,9 @@ public class ResizePicsActivity extends AppCompatActivity {
             super.onDraw(canvas);
             canvas.save();
             canvas.scale(scaleFactor, scaleFactor);
+
+            /* Clamp the translation within the border of this view */
+
             if((translateX * -1) < 0) {
                 translateX = 0;
             } else if((translateX * -1) > (scaleFactor - 1) * this.getWidth()) {
@@ -241,9 +324,16 @@ public class ResizePicsActivity extends AppCompatActivity {
             } else if((translateY * -1) > (scaleFactor - 1) * this.getHeight()) {
                 translateY = (1 - scaleFactor) * this.getHeight();
             }
+
             canvas.translate(translateX / scaleFactor, translateY / scaleFactor);
+
             if (bitmap != null)
                 canvas.drawBitmap(bitmap, 0, 0, null);
+
+            /* If in cropping mode, update the vertices of the rectangle to be drawn on top of the
+            bmp to delimit the area to be cropped
+             */
+
             if (croppingPic) {
                 rectF.left = Math.min((startX - translateX) / scaleFactor, (endX - translateX) / scaleFactor);
                 rectF.top = Math.min((startY - translateY) / scaleFactor, (endY - translateY) / scaleFactor);
@@ -255,6 +345,7 @@ public class ResizePicsActivity extends AppCompatActivity {
                 else
                     canvas.drawRect(rectF, paintBlack);
             }
+
             canvas.restore();
         }
     }

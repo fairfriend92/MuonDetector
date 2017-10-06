@@ -297,11 +297,27 @@ public class MainActivity extends AppCompatActivity {
         MainActivity.this.startService(detectorIntent);
     }
 
+    private static final int RESIZE_PIC_REQUEST = 0;
+
     public void StopCapture (View view) {
         MainActivity.this.stopService(detectorIntent);
 
         Intent resizePicsIntent = new Intent(MainActivity.this, ResizePicsActivity.class);
-        MainActivity.this.startActivity(resizePicsIntent);
+        MainActivity.this.startActivityForResult(resizePicsIntent, RESIZE_PIC_REQUEST);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        // Check which request we're responding to
+        Log.d("MainActivity", " " + resultCode + requestCode);
+        if (requestCode == RESIZE_PIC_REQUEST) {
+            // Make sure the request was successful
+            if (resultCode == RESULT_OK) {
+                setContentView(R.layout.activity_main);
+                MyCountownTimer myCountownTimer = new MyCountownTimer(100, 100, this);
+                myCountownTimer.start();
+            }
+        }
     }
 
     /*
