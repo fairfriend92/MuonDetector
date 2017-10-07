@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/pic_tag_popup_layout"
+    android:orientation="vertical" android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <TextView android:id="@+id/popup_text"
+        style="?android:attr/listSeparatorTextViewStyle"
+        android:text="@string/popup_text"
+        />
+
+    <RadioGroup xmlns:android="http://schemas.android.com/apk/res/android"
+        android:id="@+id/radio_group"
+        android:layout_width="fill_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_below="@id/popup_text"
+        >
+        <RadioButton android:id="@+id/radio_undetermined"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/undetermined"
+            android:onClick="onRadioButtonClicked"/>
+        <RadioButton android:id="@+id/radio_track"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/track"
+            android:onClick="onRadioButtonClicked"/>
+        <RadioButton android:id="@+id/radio_worm"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/worm"
+            android:onClick="onRadioButtonClicked"/>
+        <RadioButton android:id="@+id/radio_spot"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/spot"
+            android:onClick="onRadioButtonClicked"/>
+        <RadioButton android:id="@+id/radio_hot_spot"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/hot_spot"
+            android:onClick="onRadioButtonClicked"/>
+    </RadioGroup>
+
+    <Button
+        android:id="@+id/save_tag_button"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/save_tag"
+        android:onClick="SaveTag"
+        android:layout_below="@id/radio_group"
+        />
+
+</RelativeLayout>

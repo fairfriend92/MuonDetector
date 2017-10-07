@@ -27,6 +27,7 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Scanner;
+import java.util.concurrent.ExecutionException;
 
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
@@ -214,10 +215,28 @@ public class MainActivity extends AppCompatActivity {
     List<Camera.Size> supportedPictureSizes;
     Spinner fpsRangeSpinner, pictureSizeSpinner, fpsSpinner;
     EditText editSampleSize = null, editCalibrationDuration = null, editCropFactor = null, editNumOfSd = null;
+    static String ip = null;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        /* First retrieve the IP of the server to which the candidate pics must be sent */
+
+        // Traffic needs to happen outside the GUI thread, therefore an asynchronous task is launched
+        // to retrieve the IP
+        LookUpServerIP lookUpServerIP = new LookUpServerIP();
+        lookUpServerIP.execute();
+
+        // Wait for the async task to finish to receive the IP
+        try {
+            ip = lookUpServerIP.get();
+        } catch (InterruptedException | ExecutionException e) {
+            String stackTrace = Log.getStackTraceString(e);
+            Log.e("MainActivity", stackTrace);
+        }
+
+        /* Then initialize the OpenGL context to retrieve info about the renderer */
 
         prefs = this.getSharedPreferences("GPUinfo", Context.MODE_PRIVATE);
 

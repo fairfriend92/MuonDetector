@@ -17,19 +17,31 @@ import android.support.v7.app.AppCompatActivity;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.GestureDetector;
+import android.view.Gravity;
+import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.CompoundButton;
+import android.widget.LinearLayout;
+import android.widget.PopupWindow;
+import android.widget.RadioButton;
+import android.widget.RelativeLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.ToggleButton;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.io.OutputStream;
+import java.net.Socket;
 
 /*
 Activity that shows the pics that were take during the detection phase and asks the user to crop
@@ -46,6 +58,13 @@ public class ResizePicsActivity extends AppCompatActivity {
     private static final float MAX_ZOOM = 5.0f;
     private static final float MAX_AREA = 1000.0f; // Maximum area of the cropped pic
 
+    // Possible tags that the user can assign to the pics
+    private static final int UNDETERMINED = 0;
+    private static final int TRACK = 1;
+    private static final int WORM = 2;
+    private static final int SPOT = 3;
+    private static final int HOT_SPOT = 4;
+
     // Static variables/objects that are used by the onDraw method of MyImageView
     private static float scaleFactor = 1.0f, translateX = 0.0f, translateY = 0.0f,
             startX = 0.0f, startY = 0.0f, endX = 0.0f, endY = 0.0f, rectArea = 0.0f;
@@ -57,14 +76,99 @@ public class ResizePicsActivity extends AppCompatActivity {
     private BitmapFactory.Options options;
     private int currentPic = 0; // Index of the pic that is being displayed
 
+    // Various objects/constants pertaining the server that must receive the pics
+    private Socket clientSocket;
+    private ObjectOutputStream socketOutputStream;
+    private boolean serverConnectionFailed = false;
+    private static final int IPTOS_RELIABILITY = 0x04;
+    private static final int SERVER_PORT_TCP = 4197;
+
+    private PopupWindow popupWindow;
+    private RelativeLayout resizePicsLayout;
+    private int selectedTag;
+
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.resize_pics_activity);
 
+        // Set up the popup window that gives the user the option to tag the pics
+        resizePicsLayout = (RelativeLayout) findViewById(R.id.resizePicsLayout);
+        LayoutInflater layoutInflater = (LayoutInflater) getSystemService(LAYOUT_INFLATER_SERVICE);
+        View popupView = layoutInflater.inflate(R.layout.pic_tag_popup, null);
+        int popupWidth = RelativeLayout.LayoutParams.WRAP_CONTENT;
+        int popupHeight = RelativeLayout.LayoutParams.WRAP_CONTENT;
+        popupWindow = new PopupWindow(popupView, popupWidth, popupHeight, false);
+
+        // Establish a connection with the server to which the pics should be sent
+        try {
+            clientSocket = new Socket(MainActivity.ip, SERVER_PORT_TCP);
+            clientSocket.setTrafficClass(IPTOS_RELIABILITY);
+            clientSocket.setKeepAlive(true);
+            socketOutputStream = new ObjectOutputStream(clientSocket.getOutputStream());
+        } catch (IOException e) {
+            CharSequence text = "Connection with the server failed: pics won't be uploaded";
+            Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
+            serverConnectionFailed= true;
+        }
+
         File storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
-        if (storageDir != null) {
-            // Save the references to the picture taken during the detection phase
+        if (storageDir != null) { // If some pics wer taken during detection phase, then this dir must have been created
+
+            /*
+            Firstly, if there are cropped pics belonging to a previous section that could not be
+            sent to the server, and if the server is online right now, send them.
+             */
+
+            // Enter the block only if the server connection has been established
+            if (!serverConnectionFailed) {
+                File croppedPicsStorageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES + File.separator + "cropped");
+
+                // The dir was created only if the cropped pics could not be sent before
+                if (croppedPicsStorageDir != null) {
+                    /* Save the references to the files containing the pics and the associated tags */
+                    String croppedPicsFolderPath = croppedPicsStorageDir.getAbsolutePath();
+                    File croppedPicsFolder = new File(croppedPicsFolderPath);
+                    File[] croppedPics = croppedPicsFolder.listFiles();
+
+                    ObjectInputStream objectInputStream = null; // To read the Candidate object from the file stream
+                    FileInputStream fileInputStream = null; // To read from the file
+
+                    for (File file : croppedPics) {
+                        try {
+                            fileInputStream = new FileInputStream(file);
+                            objectInputStream = new ObjectInputStream(fileInputStream);
+                            Candidate candidate = (Candidate) objectInputStream.readObject();
+
+                            // Send the Candidate object containing the pic and the tag to the server
+                            socketOutputStream.writeObject(candidate);
+                            socketOutputStream.flush();
+                            socketOutputStream.close();
+                        } catch (IOException | ClassNotFoundException e) {
+                            String stackTrace = Log.getStackTraceString(e);
+                            Log.e("ResizePicsActivity", stackTrace);
+                        }
+                        /* [End of try] */
+                    }
+                    /* [End of for] */
+
+                    assert fileInputStream != null;
+                    assert objectInputStream != null;
+
+                    try {
+                        fileInputStream.close();
+                        objectInputStream.close();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+
+                }
+                /* [End of if(croppedPicsStorageDir != null)] */
+            }
+            /* [End of if (!serverConnectionFailed)] */
+
+            // Save the references to the pictures taken during the detection phase
             String picsFolderPath = storageDir.getAbsolutePath();
             File picsFolder = new File(picsFolderPath);
             pics = picsFolder.listFiles();
@@ -98,7 +202,7 @@ public class ResizePicsActivity extends AppCompatActivity {
                         discardButton.setVisibility(visibility);
                     }
                 });
-            } // If no pics were take, shutdown gracefully
+            } // If no pics were taken, shutdown gracefully
             /* [End of inner if] */
         } else  {
             CharSequence text = "A problem when reading the directory has occurred";
@@ -111,45 +215,118 @@ public class ResizePicsActivity extends AppCompatActivity {
     /* [End of onCreate method] */
 
     /*
-    Called when the save pic button is pressed
+    Method that belongs to the popup window layout and allows the user to select a tag for the
+    candidate picture
      */
 
-    public void SavePic (View view) throws IOException {
+    public void onRadioButtonClicked(View view) {
+        // Is the button now checked?
+        boolean checked = ((RadioButton) view).isChecked();
+
+        // Check which radio button was clicked
+        switch(view.getId()) {
+            case R.id.radio_undetermined:
+                if (checked)
+                    selectedTag = UNDETERMINED;
+                break;
+            case R.id.radio_track:
+                if (checked)
+                    selectedTag = TRACK;
+                break;
+            case R.id.radio_worm:
+                if (checked)
+                    selectedTag = WORM;
+                break;
+            case R.id.radio_spot:
+                if (checked)
+                    selectedTag = SPOT;
+                break;
+            case R.id.radio_hot_spot:
+                if (checked)
+                    selectedTag = HOT_SPOT;
+                break;
+        }
+    }
+
+    /*
+    Method that belongs to the popup window layout. When called, it creates a bitmap from the region
+    selected by the user, tags the bitmap with the chosen tag, and finally sends the resulting object
+    to the server if it is online, otherwise stores it locally on the terminal.
+     */
+
+    public void SaveTag(View view) throws IOException {
+        // Create the cropped pic using the coordinate of the rectangle drawn on screen
+        Bitmap croppedBmp = Bitmap.createBitmap(bitmap, (int) rectF.left, (int) rectF.top, (int) (rectF.right - rectF.left), (int) (rectF.bottom - rectF.top));
+
+        // Get the array of pixels which form the bitmap
+        int[] pixels = new int[croppedBmp.getWidth() * croppedBmp.getHeight()];
+        croppedBmp.getPixels(pixels, 0, croppedBmp.getWidth(), 0, 0, croppedBmp.getWidth(), croppedBmp.getHeight());
+
+        Candidate candidate = new Candidate(selectedTag, pixels);
+
+        // If the connection with the server is available, send the  Candidate objects...
+        if (!serverConnectionFailed) {
+            socketOutputStream.writeObject(candidate);
+            socketOutputStream.flush();
+        } else { // Otherwise store them locally
+            SavePic(candidate);
+        }
+
+        // Now that the cropped pic has been taken care of, the original one can be deleted
+        if (!pics[currentPic - 1].delete()) {
+            CharSequence text = "Error deleting original pic";
+            Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
+        }
+
+        popupWindow.dismiss();
+        LoadNextPic();
+    }
+
+    /*
+    Called when the save pic button is pressed. If the server is available the pic is immediately sent,
+    otherwise the SavePic method is called to store the pic locally so that it can be sent later when
+    the sever is back online
+     */
+
+    public void SendPic(View view) throws IOException {
         // Proceed only if the cropped region is of the right size
         if (rectF != null & rectArea < MAX_AREA & rectArea > 0) {
-            // Prepare the file for saving the cropped pic
-            String imageFileName = "cropped";
-            File storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES + File.separator + "cropped");
-            File image = File.createTempFile(
-                    imageFileName,  /* prefix */
-                    ".jpg",         /* suffix */
-                    storageDir      /* directory */
-            );
-            FileOutputStream fileOutputStream = new FileOutputStream(image);
-
-            // Create the cropped pic using the coordinate of the rectangle drawn on screen
-            Bitmap croppedBmp = Bitmap.createBitmap(bitmap, (int) rectF.left, (int) rectF.top, (int) (rectF.right - rectF.left), (int) (rectF.bottom - rectF.top));
-            croppedBmp.compress(Bitmap.CompressFormat.JPEG, 100, fileOutputStream);
-
-            // Save the pic
-            fileOutputStream.close();
-            CharSequence text = "Pic saved";
-            Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
-
-            // Now that the cropped pic has been saved, the original one can be deleted
-            if (!pics[currentPic - 1].delete()) {
-                text = "Error deleting original pic";
-                Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
-            }
-
-            LoadNextPic();
+            //Show the popup that gives the user the option to tag the candidate pic
+            selectedTag = UNDETERMINED; // Set the default tag
+            popupWindow.showAtLocation(resizePicsLayout, Gravity.CENTER, 0, 0);
         } else if (rectArea > MAX_AREA){
-            CharSequence text = "Cropped area is either too";
+            CharSequence text = "Cropped area is too big";
             Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
         } else if (rectF == null | rectArea <= 0) {
             CharSequence text = "Cropped area is zero";
             Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
         }
+    }
+
+    /*
+    This method is called if the server is not available and thus the cropped pic can't be sent. In
+    this cas the pic is saved locally so that it can be sent at a later time.
+     */
+
+    private void SavePic (Candidate candidate) throws IOException {
+        // Prepare the file for saving the cropped pic
+        String imageFileName = "cropped";
+        File storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES + File.separator + "cropped");
+        File image = File.createTempFile(
+                imageFileName,  /* prefix */
+                ".cnd",         /* suffix */
+                storageDir      /* directory */
+        );
+        FileOutputStream fileOutputStream = new FileOutputStream(image);
+
+        ObjectOutputStream objectOutputStream = new ObjectOutputStream(fileOutputStream);
+        objectOutputStream.writeObject(candidate);
+
+        // Save the pic
+        fileOutputStream.close();
+        objectOutputStream.close();
+        CharSequence text = "Pic saved";
+        Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
     }
 
     public void DiscardPic (View view) {
@@ -181,6 +358,13 @@ public class ResizePicsActivity extends AppCompatActivity {
         } else { // If no pics are left to review, finish the activity
             CharSequence text = "All pics reviewed";
             Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
+            try {
+                socketOutputStream.close();
+                clientSocket.close();
+            } catch (IOException e) {
+                String stackTrace = Log.getStackTraceString(e);
+                Log.e("ResizePicsActivity", stackTrace);
+            }
             setResult(RESULT_OK);
             finish();
             return false;
