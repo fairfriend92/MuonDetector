@@ -42,6 +42,7 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.OutputStream;
 import java.net.Socket;
+import java.util.concurrent.ExecutionException;
 
 /*
 Activity that shows the pics that were take during the detection phase and asks the user to crop
@@ -80,8 +81,6 @@ public class ResizePicsActivity extends AppCompatActivity {
     private Socket clientSocket;
     private ObjectOutputStream socketOutputStream;
     private boolean serverConnectionFailed = false;
-    private static final int IPTOS_RELIABILITY = 0x04;
-    private static final int SERVER_PORT_TCP = 4197;
 
     private PopupWindow popupWindow;
     private RelativeLayout resizePicsLayout;
@@ -101,16 +100,24 @@ public class ResizePicsActivity extends AppCompatActivity {
         int popupHeight = RelativeLayout.LayoutParams.WRAP_CONTENT;
         popupWindow = new PopupWindow(popupView, popupWidth, popupHeight, false);
 
-        // Establish a connection with the server to which the pics should be sent
+        /*
+        Since connection operations cannot run on the gui thread, launch an AsyncTask to connect to
+        the server. Retrieve the result of the connection from the task and update the local
+        references
+         */
+
+        ServerConnect serverConnect = new ServerConnect();
+        serverConnect.execute(getApplicationContext()); // Launch the task
         try {
-            clientSocket = new Socket(MainActivity.ip, SERVER_PORT_TCP);
-            clientSocket.setTrafficClass(IPTOS_RELIABILITY);
-            clientSocket.setKeepAlive(true);
-            socketOutputStream = new ObjectOutputStream(clientSocket.getOutputStream());
-        } catch (IOException e) {
-            CharSequence text = "Connection with the server failed: pics won't be uploaded";
-            Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
-            serverConnectionFailed= true;
+            ConnectionResult connectionResult = serverConnect.get(); // Retrieve the result of the connection
+
+            // Update the local references
+            clientSocket = connectionResult.clientSocket;
+            socketOutputStream = connectionResult.objectOutputStream;
+            serverConnectionFailed = connectionResult.connectionFailed;
+        } catch (InterruptedException | ExecutionException e) {
+            String stackTrace = Log.getStackTraceString(e);
+            Log.e("MainActivity", stackTrace);
         }
 
         File storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
@@ -136,6 +143,8 @@ public class ResizePicsActivity extends AppCompatActivity {
                     FileInputStream fileInputStream = null; // To read from the file
 
                     for (File file : croppedPics) {
+                        boolean picSent = true;
+
                         try {
                             fileInputStream = new FileInputStream(file);
                             objectInputStream = new ObjectInputStream(fileInputStream);
@@ -146,10 +155,18 @@ public class ResizePicsActivity extends AppCompatActivity {
                             socketOutputStream.flush();
                             socketOutputStream.close();
                         } catch (IOException | ClassNotFoundException e) {
+                            picSent = false;
                             String stackTrace = Log.getStackTraceString(e);
                             Log.e("ResizePicsActivity", stackTrace);
                         }
                         /* [End of try] */
+
+                        // If the pic was succesfully sent, try deleting the cropped pic
+                        if (picSent)
+                            if (!file.delete())
+                                Toast.makeText(this, "Error deleting cropped pic", Toast.LENGTH_SHORT).show();
+
+
                     }
                     /* [End of for] */
 

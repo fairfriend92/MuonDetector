@@ -364,7 +364,7 @@ public class DetectorService extends Service {
     private File createImageFile(float luminance) throws IOException {
         // Create an image file name
         //String timeStamp = new SimpleDateFormat((int)luminance + "_yyyyMMdd_HHmmss", Locale.ITALY).format(new Date());
-        String imageFileName = "" + (int)luminance;
+        String imageFileName = (int)luminance + "_" + luminance;
         File storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
         File image = File.createTempFile(
                 imageFileName,  /* prefix */
