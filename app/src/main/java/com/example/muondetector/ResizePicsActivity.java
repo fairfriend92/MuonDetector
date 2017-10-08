@@ -130,10 +130,10 @@ public class ResizePicsActivity extends AppCompatActivity {
 
             // Enter the block only if the server connection has been established
             if (!serverConnectionFailed) {
-                File croppedPicsStorageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES + File.separator + "cropped");
+                File croppedPicsStorageDir = new File(Environment.DIRECTORY_PICTURES + File.separator + "cropped");
 
                 // The dir was created only if the cropped pics could not be sent before
-                if (croppedPicsStorageDir != null) {
+                if (croppedPicsStorageDir.exists()) {
                     /* Save the references to the files containing the pics and the associated tags */
                     String croppedPicsFolderPath = croppedPicsStorageDir.getAbsolutePath();
                     File croppedPicsFolder = new File(croppedPicsFolderPath);
@@ -141,6 +141,8 @@ public class ResizePicsActivity extends AppCompatActivity {
 
                     ObjectInputStream objectInputStream = null; // To read the Candidate object from the file stream
                     FileInputStream fileInputStream = null; // To read from the file
+
+                    boolean allPicsSent = true;
 
                     for (File file : croppedPics) {
                         boolean picSent = true;
@@ -161,14 +163,19 @@ public class ResizePicsActivity extends AppCompatActivity {
                         }
                         /* [End of try] */
 
+                        allPicsSent &= picSent;
+
                         // If the pic was succesfully sent, try deleting the cropped pic
                         if (picSent)
                             if (!file.delete())
                                 Toast.makeText(this, "Error deleting cropped pic", Toast.LENGTH_SHORT).show();
 
-
                     }
                     /* [End of for] */
+
+                    if (allPicsSent)
+                        if (!croppedPicsFolder.delete())
+                            Toast.makeText(this, "Error deleting cropped pics folder", Toast.LENGTH_SHORT).show();
 
                     assert fileInputStream != null;
                     assert objectInputStream != null;
@@ -347,6 +354,8 @@ public class ResizePicsActivity extends AppCompatActivity {
     }
 
     public void DiscardPic (View view) {
+        if (!pics[currentPic - 1].delete())
+            Toast.makeText(this, "Error deleting pic", Toast.LENGTH_SHORT).show();
         LoadNextPic();
     }
 
