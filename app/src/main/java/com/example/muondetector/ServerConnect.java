@@ -9,7 +9,6 @@ that occurred in establishing the connection.
 
 import android.content.Context;
 import android.os.AsyncTask;
-import android.util.Log;
 import android.widget.Toast;
 
 import java.io.IOException;
@@ -19,24 +18,31 @@ import java.net.Socket;
 public class ServerConnect extends AsyncTask<Context, Void, ConnectionResult> {
     private static final int SERVER_PORT_TCP = 4197;
     private static final int IPTOS_RELIABILITY = 0x04;
+    private boolean serverConnectionFailed = false;
+    private Context context;
 
     @Override
     protected ConnectionResult doInBackground(Context... contexts) {
-        Context context = contexts[0];
+        context = contexts[0];
         Socket clientSocket = null;
         ObjectOutputStream socketOutputStream = null;
-        boolean serverConnectionFailed = false;
         try {
             clientSocket = new Socket(MainActivity.ip, SERVER_PORT_TCP);
             clientSocket.setTrafficClass(IPTOS_RELIABILITY);
             clientSocket.setKeepAlive(true);
             socketOutputStream = new ObjectOutputStream(clientSocket.getOutputStream());
         } catch (IOException e) {
-            CharSequence text = "Connection with the server failed: pics won't be uploaded";
-            Toast.makeText(context, text, Toast.LENGTH_SHORT).show();
             serverConnectionFailed= true;
         }
 
         return new ConnectionResult(clientSocket, socketOutputStream, serverConnectionFailed);
+    }
+
+    @Override
+    protected void onPostExecute(ConnectionResult result) {
+        if (serverConnectionFailed) {
+            CharSequence text = "Connection with the server failed";
+            Toast.makeText(context, text, Toast.LENGTH_SHORT).show();
+        }
     }
 }

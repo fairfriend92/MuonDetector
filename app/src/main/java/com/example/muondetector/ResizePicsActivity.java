@@ -25,6 +25,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.CompoundButton;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.PopupWindow;
 import android.widget.RadioButton;
@@ -96,6 +97,7 @@ public class ResizePicsActivity extends AppCompatActivity {
         resizePicsLayout = (RelativeLayout) findViewById(R.id.resizePicsLayout);
         LayoutInflater layoutInflater = (LayoutInflater) getSystemService(LAYOUT_INFLATER_SERVICE);
         View popupView = layoutInflater.inflate(R.layout.pic_tag_popup, null);
+        popupView.setBackgroundColor(Color.WHITE);
         int popupWidth = RelativeLayout.LayoutParams.WRAP_CONTENT;
         int popupHeight = RelativeLayout.LayoutParams.WRAP_CONTENT;
         popupWindow = new PopupWindow(popupView, popupWidth, popupHeight, false);
@@ -286,7 +288,7 @@ public class ResizePicsActivity extends AppCompatActivity {
         int[] pixels = new int[croppedBmp.getWidth() * croppedBmp.getHeight()];
         croppedBmp.getPixels(pixels, 0, croppedBmp.getWidth(), 0, 0, croppedBmp.getWidth(), croppedBmp.getHeight());
 
-        Candidate candidate = new Candidate(selectedTag, pixels);
+        Candidate candidate = new Candidate(selectedTag, pixels, !(currentPic < pics.length));
 
         // If the connection with the server is available, send the  Candidate objects...
         if (!serverConnectionFailed) {
@@ -365,7 +367,7 @@ public class ResizePicsActivity extends AppCompatActivity {
      */
 
     private boolean LoadNextPic () {
-        // If the current file is, indeed, a directory, simply move over to the next one
+        // If the current file is, indeed, a directory, simply move on to the next one
         if (currentPic < pics.length && pics[currentPic].isDirectory()) {
             currentPic++;
         }
@@ -382,14 +384,16 @@ public class ResizePicsActivity extends AppCompatActivity {
             currentPic++;
             return true;
         } else { // If no pics are left to review, finish the activity
-            CharSequence text = "All pics reviewed";
-            Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
-            try {
-                socketOutputStream.close();
-                clientSocket.close();
-            } catch (IOException e) {
-                String stackTrace = Log.getStackTraceString(e);
-                Log.e("ResizePicsActivity", stackTrace);
+            if (!serverConnectionFailed) {
+                CharSequence text = "All pics reviewed";
+                Toast.makeText(this, text, Toast.LENGTH_SHORT).show();
+                try {
+                    socketOutputStream.close();
+                    clientSocket.close();
+                } catch (IOException e) {
+                    String stackTrace = Log.getStackTraceString(e);
+                    Log.e("ResizePicsActivity", stackTrace);
+                }
             }
             setResult(RESULT_OK);
             finish();
@@ -537,8 +541,10 @@ public class ResizePicsActivity extends AppCompatActivity {
 
             canvas.translate(translateX / scaleFactor, translateY / scaleFactor);
 
-            if (bitmap != null)
+            if (bitmap != null) {
+                bitmap = Bitmap.createScaledBitmap(bitmap, this.getWidth(), this.getHeight(), false); // Scale the bmp to the view size
                 canvas.drawBitmap(bitmap, 0, 0, null);
+            }
 
             /* If in cropping mode, update the vertices of the rectangle to be drawn on top of the
             bmp to delimit the area to be cropped
